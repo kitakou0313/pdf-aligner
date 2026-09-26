@@ -1,0 +1,12 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.DS_Store
+
+# E2E の成果物(スクリーンショット、ダウンロードした PNG など)。git の追跡対象にしない
+e2e-artifacts/
+test-results/
+playwright-report/
+
+tests/fixtures/*.pdf
