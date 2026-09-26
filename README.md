@@ -17,11 +17,20 @@
 | `npm run preview` | ビルド成果物の配信 |
 | `npm run check` | lint、型チェック、単体テストをまとめて実行 |
 | `npm run e2e` | ビルドして配信し、Playwright(同梱の Chromium)で E2E を実行 |
+| `npm run e2e:chrome` | 同じ E2E を、インストール済みの Google Chrome で実行(150 ページの描画は、同梱の Chromium より遅い) |
 | `npm run fixtures` | テスト用 PDF を `tests/fixtures/` に手動で再生成(通常は E2E の開始時に自動で生成される) |
 
 ## E2E の成果物
-- スクリーンショットは `e2e-artifacts/screenshots/<実行日時>/<テスト名>/<連番-ステップ名>.png` に保存される。新しい 10 実行分だけを残し、古いものは実行の開始時に削除される。
+- スクリーンショットは `e2e-artifacts/screenshots/<実行日時>/<テスト名>/<連番-ステップ名>.png` に保存される。新しい 10 実行分だけを残し、古いものは実行の開始時に削除される。ダウンロードした PNG も、同じディレクトリに保存される。
+- 性能の実測値(A4・30 ページと A4・150 ページの、描画・列数の変更・PNG の生成にかかる時間)は `e2e-artifacts/performance/<実行日時>/<ページ数>pages.json` に保存される。記録するだけで、閾値でテストは失敗させない。
 - `e2e-artifacts/`、`test-results/`、`playwright-report/` は git の追跡対象外。
+
+## pdf.js の更新
+`pdfjs-dist` は厳密なバージョンに固定している(`package.json` の `dependencies`)。ライブラリ本体、Worker、付属アセット(CMap、標準フォント、wasm、ICC プロファイル)は、同じバージョンのものが揃っている必要がある。
+- 付属アセットは、`tools/pdfjs-assets.ts` の Vite プラグインが、`node_modules/pdfjs-dist/` から、開発サーバーの配信とビルドの成果物(`dist/pdfjs/`)に出力する。コピーは要らないので、`npm install --save-exact pdfjs-dist@<版>` で版を上げれば、アセットも一緒に更新される。
+- 配信するフォルダは `src/pdf/asset-paths.ts` の `ASSET_FOLDERS`。新しい版でフォルダが増減したら、ここを直す。
+- 更新したら、`npm run check` と `npm run e2e` を通す。特に `e2e/fonts.spec.ts`(CMap を同一オリジンから読むこと、コンソールに警告が出ないこと)と、`e2e/network-isolation.spec.ts`(通信ゼロ)を見る。
+- pdf.js の内部の挙動に依存している箇所(`src/pdf/source.ts` の、作業用 canvas を経由した描画。`src/pdf/page-sizes.ts` の、壊れたページの扱い)は、更新後に E2E の `render.spec.ts` と `errors.spec.ts` で確かめる。
 
 ## テスト用 PDF
 `tests/fixtures/` の PDF は、全て `tests/fixtures/build.ts` が生成した自作のもの。外部の PDF は使わない。
