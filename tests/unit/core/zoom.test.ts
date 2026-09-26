@@ -7,10 +7,12 @@ import {
   clampZoom,
   cssScale,
   fitZoom,
+  formatZoomPercent,
   reduceZoom,
   resolveZoom,
   scrollForZoomAt,
-  stepZoom,
+  wheelZoomFactor,
+  zoomAnchoredScroll,
   zoomRange,
   type Point,
   type ZoomState,
@@ -113,23 +115,9 @@ describe('resolveZoom(モードから、実際に使う倍率を決める)', () 
   });
 });
 
-describe('stepZoom(＋ / − ボタンの 1 段階)', () => {
-  it('＋ で 1.25 倍、− で 1/1.25 倍', () => {
+describe('ZOOM_STEP(＋ / − ボタンの 1 段階)', () => {
+  it('＋ で 1.25 倍、− で 1/1.25 倍(blueprint の F5)。ボタンの動きは、ZoomController のテストで確かめる', () => {
     expect(ZOOM_STEP).toBe(1.25);
-    expect(stepZoom(1, 1, 0.5)).toBeCloseTo(1.25, 10);
-    expect(stepZoom(1, -1, 0.5)).toBeCloseTo(0.8, 10);
-  });
-
-  it('上限 800% と下限で止まる', () => {
-    expect(stepZoom(7, 1, 0.5)).toBe(8);
-    expect(stepZoom(8, 1, 0.5)).toBe(8);
-    expect(stepZoom(0.11, -1, 0.5)).toBe(0.1);
-    expect(stepZoom(0.1, -1, 0.5)).toBe(0.1);
-  });
-
-  it('巨大な画像では、下限が「収まる倍率」まで下がる', () => {
-    expect(stepZoom(0.03, -1, 0.02)).toBeCloseTo(0.024, 10);
-    expect(stepZoom(0.021, -1, 0.02)).toBe(0.02);
   });
 });
 
@@ -205,5 +193,119 @@ describe('reduceZoom(モードの遷移)', () => {
     const manual: ZoomState = { mode: 'manual', zoom: 2 };
     expect(reduceZoom(manual, { type: 'set', zoom: 2 })).toEqual(manual);
     expect(reduceZoom(FIT, { type: 'fit' })).toEqual(FIT);
+  });
+});
+
+describe('wheelZoomFactor(Ctrl+ホイールとピンチの、1 回のイベントでの拡縮の比)', () => {
+  it('ホイールの 1 目盛り(ピクセル単位で 100)は、＋ / − ボタン 1 回(1.25 倍)に近い比', () => {
+    expect(wheelZoomFactor(-100, 0)).toBeCloseTo(Math.exp(0.2), 10);
+    expect(wheelZoomFactor(-100, 0)).toBeGreaterThan(1.2);
+    expect(wheelZoomFactor(-100, 0)).toBeLessThan(ZOOM_STEP);
+  });
+
+  it('上に回す(deltaY が負)と拡大、下に回すと縮小。同じ量なら、拡大と縮小で元に戻る', () => {
+    expect(wheelZoomFactor(-30, 0)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(30, 0)).toBeLessThan(1);
+    expect(wheelZoomFactor(-30, 0) * wheelZoomFactor(30, 0)).toBeCloseTo(1, 10);
+  });
+
+  it('トラックパッドのピンチの小さな値(±1〜5)は、少しだけ拡縮する(なめらか)', () => {
+    expect(wheelZoomFactor(-2, 0)).toBeGreaterThan(1);
+    expect(wheelZoomFactor(-2, 0)).toBeLessThan(1.01);
+  });
+
+  it('0 は、変化なし', () => {
+    expect(wheelZoomFactor(0, 0)).toBe(1);
+  });
+
+  it('行単位(deltaMode 1)は 16 倍、ページ単位(2)は 400 倍のピクセルとして扱う', () => {
+    expect(wheelZoomFactor(-3, 1)).toBeCloseTo(wheelZoomFactor(-48, 0), 10);
+    expect(wheelZoomFactor(-0.25, 2)).toBeCloseTo(wheelZoomFactor(-100, 0), 10);
+  });
+
+  it('極端に大きな値でも、1 回のイベントでは、半分〜2 倍の範囲に収める', () => {
+    expect(wheelZoomFactor(-100000, 0)).toBe(2);
+    expect(wheelZoomFactor(100000, 0)).toBe(0.5);
+  });
+
+  it.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])('%s は、変化なし(1)にする', (bad) => {
+    expect(wheelZoomFactor(bad, 0)).toBe(1);
+  });
+});
+
+/** 画像(size)が領域(view)より小さいときの、中央に置くための余白。大きいときは 0。 */
+function centeredMargin(view: number, size: number): number {
+  return Math.max(0, (view - size) / 2);
+}
+
+describe('zoomAnchoredScroll(カーソルの下の画像上の点を動かさずに拡縮したときの、新しいスクロール位置)', () => {
+  const IMAGE = { width: 1000, height: 800 };
+  const VIEWPORT = { width: 400, height: 300 };
+
+  it('画像が領域より大きいまま拡大: (100, 50)のカーソル、スクロール (200, 100)、1 → 2 倍で (500, 250)', () => {
+    const next = zoomAnchoredScroll({ scroll: { x: 200, y: 100 }, pointer: { x: 100, y: 50 }, image: IMAGE, viewport: VIEWPORT, oldCss: 1, newCss: 2 });
+    expect(next).toEqual({ x: 500, y: 250 });
+  });
+
+  it('縮小して、動ける範囲の端を超えるときは、範囲に収める(2 → 1 倍、スクロールが最大)', () => {
+    const next = zoomAnchoredScroll({ scroll: { x: 1600, y: 1300 }, pointer: { x: 200, y: 150 }, image: IMAGE, viewport: VIEWPORT, oldCss: 2, newCss: 1 });
+    expect(next).toEqual({ x: 600, y: 500 });
+  });
+
+  it('画像が領域より小さくて中央に置かれているとき(余白の分だけずれる)も、カーソルの下の点を保つ', () => {
+    const small = { width: 100, height: 100 };
+    const next = zoomAnchoredScroll({ scroll: { x: 0, y: 0 }, pointer: { x: 200, y: 150 }, image: small, viewport: VIEWPORT, oldCss: 1, newCss: 4 });
+    // 画像の中心(50, 50)が、カーソル (200, 150) の下に来る: x は 0(はみ出さない)、y は 50 * 4 - 150 = 50
+    expect(next).toEqual({ x: 0, y: 50 });
+  });
+
+  it('小さい画像を、領域より大きくなるまで拡大するとき、拡大前の余白の分を差し引く(画像の中心をカーソルの下に保つ)', () => {
+    const small = { width: 100, height: 100 };
+    const next = zoomAnchoredScroll({ scroll: { x: 0, y: 0 }, pointer: { x: 200, y: 150 }, image: small, viewport: VIEWPORT, oldCss: 1, newCss: 8 });
+    // 画像の中心(50, 50)を、カーソル (200, 150) の下に置く: x は 50 * 8 - 200、y は 50 * 8 - 150
+    expect(next).toEqual({ x: 200, y: 250 });
+  });
+
+  it('拡大しても領域より小さいままなら、中央に置くので、スクロールは 0 のまま', () => {
+    const small = { width: 100, height: 100 };
+    const next = zoomAnchoredScroll({ scroll: { x: 0, y: 0 }, pointer: { x: 200, y: 150 }, image: small, viewport: VIEWPORT, oldCss: 1, newCss: 2 });
+    expect(next).toEqual({ x: 0, y: 0 });
+  });
+
+  it('画像が大きくて中央に置かれなくなる方向(拡大)でも、拡縮の前後で、カーソルの下の点が動かない', () => {
+    const args = { scroll: { x: 0, y: 0 }, pointer: { x: 250, y: 120 }, image: { width: 200, height: 200 }, viewport: VIEWPORT, oldCss: 1, newCss: 3 };
+    const next = zoomAnchoredScroll(args);
+    const before = (0 + 250 - centeredMargin(400, 200)) / 1;
+    const after = (next.x + 250 - centeredMargin(400, 600)) / 3;
+    expect(after).toBeCloseTo(before, 6);
+  });
+
+  it('倍率が同じなら、スクロールは(範囲内で)変わらない', () => {
+    const next = zoomAnchoredScroll({ scroll: { x: 30, y: 40 }, pointer: { x: 5, y: 6 }, image: IMAGE, viewport: VIEWPORT, oldCss: 1, newCss: 1 });
+    expect(next).toEqual({ x: 30, y: 40 });
+  });
+
+  it('カーソルが画像の外(余白)にあっても、結果は有限で、動ける範囲に収まる', () => {
+    const small = { width: 100, height: 100 };
+    const next = zoomAnchoredScroll({ scroll: { x: 0, y: 0 }, pointer: { x: 5, y: 5 }, image: small, viewport: VIEWPORT, oldCss: 1, newCss: 8 });
+    expect(next.x).toBeGreaterThanOrEqual(0);
+    expect(next.x).toBeLessThanOrEqual(800 - 400);
+    expect(next.y).toBeGreaterThanOrEqual(0);
+    expect(next.y).toBeLessThanOrEqual(800 - 300);
+  });
+});
+
+describe('formatZoomPercent(倍率の表示)', () => {
+  it.each([
+    [1, '100%'],
+    [8, '800%'],
+    [0.1, '10%'],
+    [0.154, '15%'],
+    [0.125, '13%'],
+    [0.0235, '2%'],
+    [1.25, '125%'],
+    [0.995, '100%'],
+  ])('倍率 %d → %s(整数に四捨五入したパーセント)', (zoom, expected) => {
+    expect(formatZoomPercent(zoom)).toBe(expected);
   });
 });

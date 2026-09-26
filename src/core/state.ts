@@ -45,6 +45,7 @@ export type AppEvent =
   | { readonly type: 'layoutPlanned'; readonly scale: number; readonly width: number; readonly height: number; readonly shrunk: boolean }
   | { readonly type: 'progress'; readonly done: number; readonly total: number }
   | { readonly type: 'renderFinished'; readonly failedPages: readonly number[] }
+  | { readonly type: 'renderFailed' }
   | { readonly type: 'dropRejected' }
   | { readonly type: 'pngFailed' };
 
@@ -125,6 +126,11 @@ function onRenderFinished(state: AppState, event: EventOf<'renderFinished'>): Ap
   return { ...state, phase: 'ready', progress, failedPages: [...event.failedPages] };
 }
 
+/** 描画そのものが失敗したら(ページ単位ではなく全体の失敗)、未読み込みに戻って「読み込めなかった」エラーだけを残す。 */
+function onRenderFailed(state: AppState): AppState {
+  return state.phase === 'rendering' ? { ...INITIAL_STATE, error: 'invalid' } : state;
+}
+
 /** 複数ファイルのドロップは拒否する。状態はそのままで、エラーだけを付ける。 */
 function onDropRejected(state: AppState): AppState {
   return { ...state, error: 'multipleFiles' };
@@ -143,6 +149,7 @@ const HANDLERS: Handlers = {
   layoutPlanned: onLayoutPlanned,
   progress: onProgress,
   renderFinished: onRenderFinished,
+  renderFailed: onRenderFailed,
   dropRejected: onDropRejected,
   pngFailed: onPngFailed,
 };

@@ -23,3 +23,14 @@ export function normalizeColumns(raw: string, pageCount: number, previous: numbe
   if (!Number.isFinite(value)) return previous;
   return Math.min(pageCount, Math.max(1, Math.round(value)));
 }
+
+/**
+ * 入力の途中で、すぐに画像へ反映してよい値を取り出す。範囲内(1〜総ページ数)の整数だけを返し、
+ * それ以外(空欄、範囲外、小数、入力の途中)は null。丸めて反映するのは、フォーカスを外したとき(normalizeColumns)。
+ */
+export function liveColumns(raw: string, pageCount: number): number | null {
+  assertPageCount(pageCount);
+  const text = raw.trim();
+  const value = text === '' ? Number.NaN : Number(text);
+  return Number.isInteger(value) && value >= 1 && value <= pageCount ? value : null;
+}

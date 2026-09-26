@@ -67,11 +67,6 @@ export function resolveZoom(state: ZoomState, fit: number): number {
   return state.mode === 'fit' ? fit : clampZoom(state.zoom, fit);
 }
 
-/** ＋(direction = 1)/ −(direction = -1)ボタンの 1 段階だけ、倍率を変える。 */
-export function stepZoom(zoom: number, direction: 1 | -1, fit: number): number {
-  return clampZoom(direction === 1 ? zoom * ZOOM_STEP : zoom / ZOOM_STEP, fit);
-}
-
 /** 1 つの軸で、カーソルの下の画像上の点を動かさない、新しいスクロール位置を求める。 */
 function anchoredScroll(scroll: number, pointer: number, oldCss: number, newCss: number): number {
   return ((scroll + pointer) / oldCss) * newCss - pointer;
@@ -102,6 +97,66 @@ export function clampScroll(scroll: Point, content: Size, viewport: Size): Point
     x: clampAxis(scroll.x, Math.max(0, content.width - viewport.width)),
     y: clampAxis(scroll.y, Math.max(0, content.height - viewport.height)),
   };
+}
+
+/** 画像が領域より小さい軸で、画像を中央に置くための余白(領域の内側。大きい軸では 0)。 */
+function centeringOffset(imageSize: number, viewportSize: number, css: number): number {
+  return Math.max(0, (viewportSize - imageSize * css) / 2);
+}
+
+/** 拡縮の前後のスクロール位置を求めるための条件。pointer は、領域の左上からの位置(CSS px)。 */
+export interface AnchoredZoom {
+  readonly scroll: Point;
+  readonly pointer: Point;
+  readonly image: Size;
+  readonly viewport: Size;
+  readonly oldCss: number;
+  readonly newCss: number;
+}
+
+/**
+ * カーソルの下にある画像上の点を動かさずに、拡大率を oldCss から newCss に変えたときの、新しいスクロール位置。
+ * 画像が領域より小さい軸は、画像が中央に置かれる(余白の分だけずれる)ので、その余白を差し引いて計算し、
+ * 結果は動ける範囲(0 〜 画像 − 領域)に収める。
+ */
+export function zoomAnchoredScroll(args: AnchoredZoom): Point {
+  const { scroll, pointer, image, viewport, oldCss, newCss } = args;
+  const before = { x: centeringOffset(image.width, viewport.width, oldCss), y: centeringOffset(image.height, viewport.height, oldCss) };
+  const after = { x: centeringOffset(image.width, viewport.width, newCss), y: centeringOffset(image.height, viewport.height, newCss) };
+  const onImage = { x: pointer.x - before.x, y: pointer.y - before.y };
+  const moved = scrollForZoomAt(scroll, onImage, oldCss, newCss);
+  const shifted = { x: moved.x + after.x - before.x, y: moved.y + after.y - before.y };
+  return clampScroll(shifted, { width: image.width * newCss, height: image.height * newCss }, viewport);
+}
+
+// Ctrl+ホイールとピンチ: deltaY 1 あたりの、拡縮の指数(ホイール 1 目盛りの 100 で、＋ / − ボタンに近い約 1.22 倍)。M4 で操作感を見て調整しうる
+const WHEEL_ZOOM_SENSITIVITY = 0.002;
+// deltaMode が行・ページのときの、ピクセルへの換算
+const WHEEL_LINE_PX = 16;
+const WHEEL_PAGE_PX = 400;
+// 1 回のイベントでの拡縮の比の上限(急な大きな値で、画面が飛ばないように)
+const WHEEL_MAX_FACTOR = 2;
+
+/** wheel イベントの deltaY を、ピクセル単位にする(deltaMode: 0 ピクセル、1 行、2 ページ)。 */
+function wheelPixels(deltaY: number, deltaMode: number): number {
+  if (deltaMode === 1) return deltaY * WHEEL_LINE_PX;
+  return deltaMode === 2 ? deltaY * WHEEL_PAGE_PX : deltaY;
+}
+
+/**
+ * Ctrl+ホイールとトラックパッドのピンチ(Chrome では Ctrl つきの wheel)の 1 イベントでの、倍率にかける比。
+ * 上に回す(deltaY が負)と拡大、下に回すと縮小。指数で表すので、同じ量の往復で元に戻る。1 回の比は 1/2〜2 に収める。
+ */
+export function wheelZoomFactor(deltaY: number, deltaMode: number): number {
+  const pixels = wheelPixels(deltaY, deltaMode);
+  if (!Number.isFinite(pixels)) return 1;
+  const factor = Math.exp(-pixels * WHEEL_ZOOM_SENSITIVITY);
+  return Math.min(WHEEL_MAX_FACTOR, Math.max(1 / WHEEL_MAX_FACTOR, factor));
+}
+
+/** 倍率を、整数に四捨五入したパーセントの文字列にする(例: 0.154 → 15%)。 */
+export function formatZoomPercent(zoom: number): string {
+  return `${Math.round(zoom * 100)}%`;
 }
 
 /** ズームのモードを遷移させる。操作(set)で manual、「画面に合わせる」と新しい PDF の読み込み(fit)で fit。 */

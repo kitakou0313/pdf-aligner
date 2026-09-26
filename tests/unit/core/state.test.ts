@@ -91,6 +91,17 @@ describe('描画の進行(layoutPlanned / progress / renderFinished)', () => {
   });
 });
 
+describe('描画そのものの失敗(renderFailed。ページ単位の失敗とは別)', () => {
+  it('rendering のときは、idle に戻り、全ての状態を捨ててエラー(読み込めなかった)だけを残す', () => {
+    const state = run([{ type: 'renderFailed' }], RENDERING);
+    expect(state).toEqual({ ...INITIAL_STATE, error: 'invalid' });
+  });
+
+  it.each([INITIAL_STATE, LOADING, READY])('rendering 以外(%#)では、無視する', (from) => {
+    expect(reduce(from, { type: 'renderFailed' })).toBe(from);
+  });
+});
+
 describe('列数の変更(columnsChanged)', () => {
   it('rendering / ready のとき、rendering に戻り、列数を更新して、進捗・縮小・警告・エラーを消す', () => {
     const dirty = run(

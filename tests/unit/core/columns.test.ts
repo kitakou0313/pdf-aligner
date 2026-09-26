@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_COLUMNS, defaultColumns, normalizeColumns } from '../../../src/core/columns.ts';
+import { DEFAULT_COLUMNS, defaultColumns, liveColumns, normalizeColumns } from '../../../src/core/columns.ts';
 
 describe('defaultColumns(blueprint の例 3: 10 と総ページ数の小さい方)', () => {
   it.each([
@@ -58,5 +58,36 @@ describe('normalizeColumns(フォーカスを外したときの入力値の丸�
   it('総ページ数が 1 なら、何を入力しても 1 になる', () => {
     expect(normalizeColumns('5', 1, 1)).toBe(1);
     expect(normalizeColumns('0', 1, 1)).toBe(1);
+  });
+});
+
+describe('liveColumns(入力の途中で、すぐに反映してよい値だけを取り出す)', () => {
+  const PAGE_COUNT = 12;
+
+  it.each([
+    ['5', 5, '範囲内の整数'],
+    ['1', 1, '下限'],
+    ['12', 12, '上限(総ページ数)'],
+    [' 7 ', 7, '前後の空白は無視する'],
+    ['3.0', 3, '整数と等しい値'],
+  ])('%j → %i(%s)', (raw, expected) => {
+    expect(liveColumns(raw, PAGE_COUNT)).toBe(expected);
+  });
+
+  it.each([
+    ['', '空欄'],
+    ['abc', '数値でない文字列'],
+    ['0', '下限未満'],
+    ['-3', '負の値'],
+    ['13', '総ページ数を超える値'],
+    ['3.6', '小数(丸めるのは、フォーカスを外したとき)'],
+    ['1e', '入力の途中の指数表記'],
+    ['Infinity', '無限大'],
+  ])('%j は、まだ反映しない(null。%s)', (raw) => {
+    expect(liveColumns(raw, PAGE_COUNT)).toBeNull();
+  });
+
+  it('総ページ数が不正なら、例外にする', () => {
+    expect(() => liveColumns('1', 0)).toThrow(RangeError);
   });
 });
