@@ -36,3 +36,6 @@
 `tests/fixtures/` の PDF は、全て `tests/fixtures/build.ts` が生成した自作のもの。外部の PDF は使わない。
 
 PDF は git の追跡対象外。E2E の開始時(`e2e/global-setup.ts`)に自動で生成され、`npm run fixtures` でも生成できる。単体テストは、ディスク上のファイルに依存せず、メモリ上に生成した結果と、一時ディレクトリへの書き出しを検証する。
+
+## TODO
+- ページの分割機能を作る
