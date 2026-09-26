@@ -22,7 +22,7 @@
 Node 24(`.nvmrc`。fnm などで切り替える)。`npm install` の後、次のコマンドを使う。
 - `npm run check`: lint、型チェック(`tsc --noEmit`)、単体テスト(Vitest)をまとめて実行する
 - `npm run e2e`: ビルドして `vite preview` で配信し、Playwright(同梱の Chromium)で E2E を実行する。スクリーンショットは `e2e-artifacts/` に保存される(git 管理外)
-- `npm run fixtures`: テスト用 PDF(`tests/fixtures/`)を再生成する
+- `npm run fixtures`: テスト用 PDF(`tests/fixtures/`)を手動で再生成する。PDF は git 管理外で、`npm run e2e` の開始時にも自動で生成される
 - `npm run dev` / `npm run build` / `npm run preview`: 開発サーバー、ビルド、ビルド成果物の配信
 
 ## 開発方針

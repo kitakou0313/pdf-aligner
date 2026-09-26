@@ -1,7 +1,10 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PDFDocument } from '@cantoo/pdf-lib';
-import { beforeAll, describe, expect, it } from 'vitest';
-import { buildFixtures } from '../fixtures/build.ts';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { FIXTURE_NAMES, buildFixtures } from '../fixtures/build.ts';
+import { writeFixtures } from '../fixtures/write.ts';
 import { CJK_TEXT, CJK_TEXT_SJIS_HEX, ENCRYPTED_PASSWORD } from '../fixtures/spec.ts';
 
 type Size = [number, number];
@@ -125,16 +128,51 @@ describe('再現性', () => {
     }
   });
 
-  it('git 管理下のファイルは、生成結果と一致する(暗号化を除く。古ければ npm run fixtures)', async () => {
+  it('FIXTURE_NAMES は、生成される全てのファイル名と同じ順序で一致する', () => {
+    expect([...fixtures.keys()]).toEqual([...FIXTURE_NAMES]);
+  });
+});
+
+describe('writeFixtures(PDF は git 管理外なので、テストの開始時に生成して書き出す)', () => {
+  const made: string[] = [];
+
+  /** 空の一時ディレクトリを作り、後始末の対象に加える。 */
+  async function tempDir(): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'pdf-aligner-fixtures-'));
+    made.push(dir);
+    return dir;
+  }
+
+  afterAll(async () => {
+    await Promise.all(made.map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  it('全てのフィクスチャを指定したディレクトリに書き出し、名前の一覧を返す(暗号化以外は生成結果と同じ)', async () => {
+    const dir = await tempDir();
+    expect((await writeFixtures(dir)).sort()).toEqual([...FIXTURE_NAMES].sort());
     for (const [name, bytes] of fixtures) {
       if (name === 'encrypted.pdf') continue;
-      const onDisk = await readFile(new URL(`../fixtures/${name}`, import.meta.url));
-      expect(new Uint8Array(onDisk), name).toEqual(bytes);
+      expect(new Uint8Array(await readFile(join(dir, name))), name).toEqual(bytes);
     }
   });
 
-  it('git 管理下の encrypted.pdf は、暗号化されており、パスワードで読める', async () => {
-    const onDisk = new Uint8Array(await readFile(new URL('../fixtures/encrypted.pdf', import.meta.url)));
-    expect(await pageSizes(onDisk, ENCRYPTED_PASSWORD)).toEqual(repeat(A4, 3));
+  it('存在しないディレクトリも作る', async () => {
+    const dir = join(await tempDir(), 'nested', 'fixtures');
+    await writeFixtures(dir);
+    expect((await readFile(join(dir, 'not-a-pdf.txt'))).length).toBeGreaterThan(0);
+  });
+
+  it('既存のファイルは、最新の内容で上書きする(古い内容が残らない)', async () => {
+    const dir = await tempDir();
+    await writeFile(join(dir, 'single-page.pdf'), 'stale');
+    await writeFixtures(dir);
+    expect(new Uint8Array(await readFile(join(dir, 'single-page.pdf')))).toEqual(get('single-page.pdf'));
+  });
+
+  it('書き出した encrypted.pdf は、暗号化されており、パスワードで読める', async () => {
+    const dir = await tempDir();
+    await writeFixtures(dir);
+    const bytes = new Uint8Array(await readFile(join(dir, 'encrypted.pdf')));
+    expect(await pageSizes(bytes, ENCRYPTED_PASSWORD)).toEqual(repeat(A4, 3));
   });
 });

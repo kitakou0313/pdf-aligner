@@ -17,11 +17,13 @@
 | `npm run preview` | ビルド成果物の配信 |
 | `npm run check` | lint、型チェック、単体テストをまとめて実行 |
 | `npm run e2e` | ビルドして配信し、Playwright(同梱の Chromium)で E2E を実行 |
-| `npm run fixtures` | テスト用 PDF を `tests/fixtures/` に再生成 |
+| `npm run fixtures` | テスト用 PDF を `tests/fixtures/` に手動で再生成(通常は E2E の開始時に自動で生成される) |
 
 ## E2E の成果物
 - スクリーンショットは `e2e-artifacts/screenshots/<実行日時>/<テスト名>/<連番-ステップ名>.png` に保存される。新しい 10 実行分だけを残し、古いものは実行の開始時に削除される。
 - `e2e-artifacts/`、`test-results/`、`playwright-report/` は git の追跡対象外。
 
 ## テスト用 PDF
-`tests/fixtures/` の PDF は、全て `tests/fixtures/build.ts` が生成した自作のもの。外部の PDF は使わない。`npm run fixtures` で再生成でき、暗号化した `encrypted.pdf` 以外は、生成結果が git 管理下のファイルと一致することを単体テストが確かめる。
+`tests/fixtures/` の PDF は、全て `tests/fixtures/build.ts` が生成した自作のもの。外部の PDF は使わない。
+
+PDF は git の追跡対象外。E2E の開始時(`e2e/global-setup.ts`)に自動で生成され、`npm run fixtures` でも生成できる。単体テストは、ディスク上のファイルに依存せず、メモリ上に生成した結果と、一時ディレクトリへの書き出しを検証する。

@@ -145,6 +145,9 @@ const BUILDERS: ReadonlyArray<readonly [string, Builder]> = [
   ['not-a-pdf.txt', notAPdf],
 ];
 
+/** 生成されるフィクスチャのファイル名の一覧(生成される順序と同じ)。 */
+export const FIXTURE_NAMES: readonly string[] = BUILDERS.map(([name]) => name);
+
 /** 全てのフィクスチャを生成し、ファイル名とバイト列の対応表にして返す。 */
 export async function buildFixtures(): Promise<Map<string, Uint8Array>> {
   const entries = await Promise.all(BUILDERS.map(async ([name, build]) => [name, await build()] as const));

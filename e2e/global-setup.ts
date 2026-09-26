@@ -1,4 +1,5 @@
 import { mkdir, readdir, rm } from 'node:fs/promises';
+import { writeFixtures } from '../tests/fixtures/write.ts';
 import { runDirName, runsToDelete } from './helpers/artifacts.ts';
 
 export const SCREENSHOT_ROOT = 'e2e-artifacts/screenshots';
@@ -12,8 +13,9 @@ async function pruneOldRuns(root: string): Promise<void> {
   }
 }
 
-/** 全テストの開始前に、今回の実行ディレクトリを決めて(環境変数で各ワーカーへ渡す)作り、古い実行を整理する。 */
+/** 全テストの開始前に、テスト用 PDF を生成し(git 管理外のため)、今回の実行ディレクトリを作り、古い実行を整理する。 */
 export default async function globalSetup(): Promise<void> {
+  await writeFixtures();
   await pruneOldRuns(SCREENSHOT_ROOT);
   const runId = runDirName(new Date());
   process.env.E2E_RUN_ID = runId;
