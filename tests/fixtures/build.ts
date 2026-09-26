@@ -123,12 +123,41 @@ function cjkObjects(content: string): string[] {
   ];
 }
 
+/** A4 のページ全面を、index 番目のページの色で塗る内容ストリーム(手書きの PDF 用)。 */
+function fillPageContent(index: number): string {
+  const [r, g, b] = pageColor(index).map((v) => (v / 255).toFixed(4));
+  return `q ${r} ${g} ${b} rg 0 0 595 842 re f Q`;
+}
+
 /** 1 ページ目の色を背景にして、フォント非埋め込みの日本語を書いた PDF を作る。 */
 function cjkPdf(): Uint8Array {
-  const [r, g, b] = pageColor(0).map((v) => (v / 255).toFixed(4));
-  const background = `q ${r} ${g} ${b} rg 0 0 595 842 re f Q`;
   const text = `BT /F1 48 Tf 1 0 0 1 40 400 Tm 0 g <${CJK_TEXT_SJIS_HEX}> Tj ET`;
-  return assemblePdf(cjkObjects(`${background}\n${text}`));
+  return assemblePdf(cjkObjects(`${fillPageContent(0)}\n${text}`));
+}
+
+/** A4 のページ辞書(手書きの PDF 用)。contents は、内容ストリームのオブジェクト番号。 */
+function a4PageObject(contents: number): string {
+  return `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << >> /Contents ${contents} 0 R >>`;
+}
+
+/**
+ * 3 ページのうち、2 ページ目だけが取得できない PDF のオブジェクト本体を作る。
+ * 2 ページ目は、中間のページツリーの節(7 番。/Count 1)の下にあり、その参照先(8 番)がページ辞書ではなく整数になっている。
+ * 節の /Count は正しく、最後のページ(3 ページ目)には到達できるので、pdf.js は総ページ数を 3 のままにする
+ * (壊れたページを、根の直下に置くと、pdf.js は /Count を補正して、総ページ数を減らしてしまう)。
+ * 1 ページ目と 3 ページ目は、正常に描ける。
+ */
+function brokenPageObjects(): string[] {
+  return [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R 7 0 R 5 0 R] /Count 3 >>',
+    a4PageObject(4),
+    streamBody(fillPageContent(0)),
+    a4PageObject(6),
+    streamBody(fillPageContent(2)),
+    '<< /Type /Pages /Parent 2 0 R /Kids [8 0 R] /Count 1 >>',
+    '42',
+  ];
 }
 
 // Q14 で決めたフィクスチャの一覧。名前と、その中身を作る関数の対応表
@@ -136,12 +165,14 @@ const BUILDERS: ReadonlyArray<readonly [string, Builder]> = [
   ['colored-12.pdf', () => coloredPdf(repeat(A4, 12))],
   ['mixed-sizes.pdf', () => coloredPdf([A4, A4_LANDSCAPE, A3])],
   ['many-pages-150.pdf', () => coloredPdf(repeat(A4, 150))],
+  ['many-pages-30.pdf', () => coloredPdf(repeat(A4, 30))],
   ['single-page.pdf', () => coloredPdf([A4])],
   ['zero-pages.pdf', () => coloredPdf([])],
   ['cjk-non-embedded.pdf', cjkPdf],
   ['encrypted.pdf', encryptedPdf],
   ['broken-garbage.pdf', garbagePdf],
   ['broken-truncated.pdf', truncatedPdf],
+  ['broken-page.pdf', () => assemblePdf(brokenPageObjects())],
   ['not-a-pdf.txt', notAPdf],
 ];
 

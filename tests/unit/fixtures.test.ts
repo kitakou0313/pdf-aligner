@@ -5,7 +5,7 @@ import { PDFDocument } from '@cantoo/pdf-lib';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FIXTURE_NAMES, buildFixtures } from '../fixtures/build.ts';
 import { writeFixtures } from '../fixtures/write.ts';
-import { CJK_TEXT, CJK_TEXT_SJIS_HEX, ENCRYPTED_PASSWORD } from '../fixtures/spec.ts';
+import { CJK_TEXT, CJK_TEXT_SJIS_HEX, ENCRYPTED_PASSWORD, pageColor } from '../fixtures/spec.ts';
 
 type Size = [number, number];
 const A4: Size = [595, 842];
@@ -49,11 +49,13 @@ describe('生成されるフィクスチャの一覧', () => {
   it('Q14 で決めた種類が、全て揃っている', () => {
     expect([...fixtures.keys()].sort()).toEqual([
       'broken-garbage.pdf',
+      'broken-page.pdf',
       'broken-truncated.pdf',
       'cjk-non-embedded.pdf',
       'colored-12.pdf',
       'encrypted.pdf',
       'many-pages-150.pdf',
+      'many-pages-30.pdf',
       'mixed-sizes.pdf',
       'not-a-pdf.txt',
       'single-page.pdf',
@@ -67,6 +69,7 @@ describe('ページ数と各ページの大きさ', () => {
     ['colored-12.pdf', repeat(A4, 12)],
     ['mixed-sizes.pdf', [A4, A4_LANDSCAPE, A3]],
     ['many-pages-150.pdf', repeat(A4, 150)],
+    ['many-pages-30.pdf', repeat(A4, 30)],
     ['single-page.pdf', [A4]],
     ['zero-pages.pdf', []],
     ['cjk-non-embedded.pdf', [A4]],
@@ -103,6 +106,35 @@ describe('異常系のフィクスチャ', () => {
 
   it('not-a-pdf.txt は、PDF の見出しで始まらない', () => {
     expect(asText(get('not-a-pdf.txt')).startsWith('%PDF')).toBe(false);
+  });
+});
+
+describe('broken-page.pdf(3 ページのうち、2 ページ目だけが取得できない PDF。ページ単位の失敗の検証用)', () => {
+  /** broken-page.pdf を、文字列として読む(構造の確認用)。 */
+  const text = (): string => asText(get('broken-page.pdf'));
+
+  it('3 ページと宣言していて、2 ページ目は中間の節(/Count 1)の下にあり、その参照先が、ページ辞書ではなく整数になっている', () => {
+    expect(text()).toContain('/Count 3');
+    expect(text()).toContain('/Kids [3 0 R 7 0 R 5 0 R]');
+    expect(text()).toMatch(/7 0 obj\n<< \/Type \/Pages \/Parent 2 0 R \/Kids \[8 0 R\] \/Count 1 >>\nendobj/);
+    expect(text()).toMatch(/8 0 obj\n42\nendobj/);
+  });
+
+  it('1 ページ目と 3 ページ目は、pageColor(0) と pageColor(2) で塗る(A4)', () => {
+    /** index 番目のページの色で、A4 全面を塗る内容ストリームの文字列。 */
+    const fill = (index: number): string => {
+      const [r, g, b] = pageColor(index).map((v) => (v / 255).toFixed(4));
+      return `q ${r} ${g} ${b} rg 0 0 595 842 re f Q`;
+    };
+    expect(text()).toContain(fill(0));
+    expect(text()).toContain(fill(2));
+    expect(text().match(/\/MediaBox \[0 0 595 842\]/g)).toHaveLength(2);
+  });
+
+  it('相互参照表の位置が正しい(壊れているのは、意図した 2 ページ目だけ)', () => {
+    const body = text();
+    const start = Number(/startxref\n(\d+)\n%%EOF/.exec(body)?.[1]);
+    expect(body.slice(start, start + 4)).toBe('xref');
   });
 });
 
