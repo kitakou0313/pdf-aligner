@@ -1,0 +1,158 @@
+:root {
+  --fg: #1f2328;
+  --bar-bg: #f4f5f7;
+  --line: #d0d4da;
+  --accent: #2563eb;
+  --preview-bg: #4a4d52;
+  --notice: #175cd3;
+  --warning: #b54708;
+  --error: #b42318;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  color: var(--fg);
+  background: #fff;
+  font: 14px/1.5 system-ui, -apple-system, 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 8px 12px;
+  background: var(--bar-bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.title {
+  margin: 0 8px 0 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  padding: 4px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+button:disabled,
+input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.field input {
+  width: 4.5em;
+  padding: 3px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.zoom-level {
+  min-width: 4.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  min-height: 1.5em;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.status .line {
+  margin: 0;
+}
+
+.status .notice {
+  color: var(--notice);
+}
+
+.status .warning {
+  color: var(--warning);
+}
+
+.status .error {
+  color: var(--error);
+  font-weight: 600;
+}
+
+.preview {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--preview-bg);
+}
+
+.preview.dragging {
+  outline: 3px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+/* ドラッグで移動できることを示す。移動中は、つかんでいる形にする(文字の選択は、ドラッグの邪魔になるので止める) */
+.preview {
+  cursor: grab;
+  user-select: none;
+}
+
+.preview.panning {
+  cursor: grabbing;
+}
+
+.placeholder {
+  margin: auto;
+  color: #d0d4da;
+  font-size: 18px;
+}
+
+/* 画像がプレビュー領域より小さいときは中央に置き、大きいときは左上から(auto の余白は、はみ出す軸では 0 になる) */
+.stage {
+  position: relative;
+  flex: none;
+  margin: auto;
+  overflow: hidden;
+}
+
+.stage canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  transform-origin: 0 0;
+}

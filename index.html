@@ -6,7 +6,30 @@
     <title>pdf-aligner</title>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="app" class="app">
+      <header class="toolbar">
+        <h1 class="title">pdf-aligner</h1>
+        <button type="button" id="pick">PDFを選択</button>
+        <input type="file" id="file-input" accept="application/pdf,.pdf" hidden />
+        <label class="field">列数:
+          <input type="number" id="columns" min="1" step="1" inputmode="numeric" disabled />
+        </label>
+        <div class="zoom" role="group" aria-label="ズーム">
+          <button type="button" id="zoom-out" aria-label="縮小">−</button>
+          <button type="button" id="zoom-level" class="zoom-level" title="押すと 100% にします">100%</button>
+          <button type="button" id="zoom-in" aria-label="拡大">＋</button>
+          <button type="button" id="zoom-fit">画面に合わせる</button>
+        </div>
+        <button type="button" id="download">PNGをダウンロード</button>
+      </header>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <main id="preview" class="preview" tabindex="0">
+        <p id="placeholder" class="placeholder">PDFをここにドロップ</p>
+        <div id="stage" class="stage" hidden>
+          <canvas id="canvas"></canvas>
+        </div>
+      </main>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
