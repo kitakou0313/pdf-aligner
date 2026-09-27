@@ -1,6 +1,7 @@
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from 'pdfjs-dist';
 import type { PageSource } from '../core/compose.ts';
 import type { PageSize, Placement } from '../core/layout.ts';
+import type { PageSizeTable } from './page-sizes.ts';
 
 /** 最終の出力画像(canvas)を提供するもの。描き終えたページは、ここの 2D コンテキストへ転送される。 */
 export interface RenderSurface {
@@ -63,11 +64,11 @@ function createScratchCanvas(): HTMLCanvasElement {
  */
 export function createPageSource(
   doc: PDFDocumentProxy,
-  sizes: readonly PageSize[],
+  table: PageSizeTable,
   surface: RenderSurface,
   makeScratch: () => HTMLCanvasElement = createScratchCanvas,
 ): PdfPageSource {
-  return new DocumentPageSource(doc, sizes, surface, makeScratch);
+  return new DocumentPageSource(doc, table, surface, makeScratch);
 }
 
 /** pdf.js の文書を、ページの供給元として使えるようにする実装。作業用の canvas は、最初に必要になったときに作る。 */
@@ -75,19 +76,24 @@ class DocumentPageSource implements PdfPageSource {
   readonly pageCount: number;
   private scratch: HTMLCanvasElement | null = null;
   private readonly doc: PDFDocumentProxy;
-  private readonly sizes: readonly PageSize[];
+  private readonly table: PageSizeTable;
   private readonly surface: RenderSurface;
   private readonly makeScratch: () => HTMLCanvasElement;
 
-  /** 文書、各ページの大きさ、最終の出力先、作業用の canvas の作り方から作る。 */
-  constructor(doc: PDFDocumentProxy, sizes: readonly PageSize[], surface: RenderSurface, makeScratch: () => HTMLCanvasElement) {
-    [this.doc, this.sizes, this.surface, this.makeScratch] = [doc, sizes, surface, makeScratch];
-    this.pageCount = sizes.length;
+  /** 文書、全ページの大きさの表、最終の出力先、作業用の canvas の作り方から作る。 */
+  constructor(doc: PDFDocumentProxy, table: PageSizeTable, surface: RenderSurface, makeScratch: () => HTMLCanvasElement) {
+    [this.doc, this.table, this.surface, this.makeScratch] = [doc, table, surface, makeScratch];
+    this.pageCount = table.sizes.length;
   }
 
-  /** n ページ目の大きさ(pt)。 */
+  /** n ページ目の大きさ(pt)。読めなかったページは、代わりの大きさ。 */
   pageSize(index: number): PageSize {
-    return this.sizes[index] as PageSize;
+    return this.table.sizes[index] as PageSize;
+  }
+
+  /** n ページ目の大きさが読めたか。 */
+  isReadable(index: number): boolean {
+    return this.table.readable[index] ?? false;
   }
 
   /** n ページ目(0 始まり)を描いて、最終の canvas へ転送する。中断されていたら、その時点で中断の例外を投げる。 */

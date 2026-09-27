@@ -21,13 +21,20 @@ async function sizeOf(doc: PDFDocumentProxy, pageNumber: number): Promise<PageSi
   }
 }
 
+/** 全ページの大きさ(sizes)と、大きさが読めたページか(readable)。読めなかったページの大きさは、代わりの大きさ。 */
+export interface PageSizeTable {
+  readonly sizes: readonly PageSize[];
+  readonly readable: readonly boolean[];
+}
+
 /**
  * 全ページの大きさ(pt)を、ページ順に読む。表示領域は回転と表示範囲(CropBox)を反映している。
  * 読めなかったページは、最初に読めたページの大きさにする(壊れたページが、他のページのセルの大きさを変えないため。
  * 1 ページも読めないときだけ、代替の大きさ)。そのページは、描画のときに同じ理由で失敗し、失敗したページとして記録される。
+ * どのページが読めなかったかも返す(区切りで分けるときは、セグメントごとに、代わりの大きさを決め直すため)。
  */
-export async function readPageSizes(doc: PDFDocumentProxy): Promise<PageSize[]> {
-  const sizes = await Promise.all(Array.from({ length: doc.numPages }, (_, index) => sizeOf(doc, index + 1)));
-  const substitute = sizes.find((size) => size !== null) ?? FALLBACK_PAGE_SIZE;
-  return sizes.map((size) => size ?? substitute);
+export async function readPageSizes(doc: PDFDocumentProxy): Promise<PageSizeTable> {
+  const read = await Promise.all(Array.from({ length: doc.numPages }, (_, index) => sizeOf(doc, index + 1)));
+  const substitute = read.find((size) => size !== null) ?? FALLBACK_PAGE_SIZE;
+  return { sizes: read.map((size) => size ?? substitute), readable: read.map((size) => size !== null) };
 }

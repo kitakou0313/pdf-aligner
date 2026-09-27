@@ -1,8 +1,10 @@
 import { composePages, type ComposeOptions, type PageSource } from './compose.ts';
 import type { Layout, LayoutPlan } from './layout.ts';
 import type { CanvasLimits } from './limits.ts';
-import type { AppEvent, AppState } from './state.ts';
+import { effectiveColumns, segmentPageCount, type Segment } from './segments.ts';
+import { segmentsOfState, shownImageName, shownSegment, type AppEvent, type AppState } from './state.ts';
 import type { Store } from './store.ts';
+import { windowSource } from './window-source.ts';
 
 /** 読み込む PDF(ファイル)。実物は File で、コントローラは名前しか使わない。 */
 export interface PdfFile {
@@ -35,8 +37,13 @@ interface RenderDeps {
   readonly limits?: CanvasLimits;
 }
 
-/** コントローラが頼る外部(描画に関わるものと、PDF を開く処理)。F は、開く対象(実物は File)の型。 */
-export interface ControllerDeps<F extends PdfFile = PdfFile> extends RenderDeps {
+/** 一括保存が頼る外部。今の出力画像(プレビューと同じ canvas)を、指定した名前の PNG として保存する。生成できなかったときは false。 */
+interface BatchDeps extends RenderDeps {
+  readonly saveImage: (fileName: string) => Promise<boolean>;
+}
+
+/** コントローラが頼る外部(描画に関わるもの、PDF を開く処理、画像の保存)。F は、開く対象(実物は File)の型。 */
+export interface ControllerDeps<F extends PdfFile = PdfFile> extends BatchDeps {
   readonly open: (file: F) => Promise<OpenedPdf>;
 }
 
@@ -44,16 +51,25 @@ export interface ControllerDeps<F extends PdfFile = PdfFile> extends RenderDeps 
 export interface Controller<F extends PdfFile = PdfFile> {
   chooseFile(file: F): Promise<void>;
   setColumns(columns: number): Promise<void>;
+  /** 区切り(正規化済み)を設定して、表示するセグメントを描き直す。 */
+  setSeparators(separators: readonly number[]): Promise<void>;
+  /** 表示するセグメントを、その先頭ページ(1 始まり)で選んで、描き直す(一括保存中は無視する)。 */
+  selectSegment(start: number): Promise<void>;
+  /** 全セグメントを、先頭から順に、セグメントごとの PNG として保存する(始められないときは何もしない)。 */
+  downloadAll(): Promise<void>;
+  /** 一括保存をキャンセルする(一括保存中でなければ何もしない)。 */
+  cancelBatch(): void;
   /** 複数ファイルのドロップを拒否する(表示中の状態はそのまま、エラーだけを出す)。 */
   rejectDrop(): void;
 }
 
-/** 今の PDF と、進行中の描画(中断の手段と、終わりを待つ手段)、PDF を選ぶ操作の世代(選ぶたびに進み、古い読み込みを見分ける)。 */
+/** 今の PDF と、進行中の描画・一括保存(中断の手段と、描画の終わりを待つ手段)、PDF を選ぶ操作の世代(選ぶたびに進み、古い読み込みを見分ける)。 */
 interface Session {
   pdf: OpenedPdf | null;
   abort: AbortController | null;
   inflight: Promise<unknown>;
   epoch: number;
+  batchAbort: AbortController | null;
 }
 
 /** 開けなかった原因を分類する(OpenFailure ならその種類、それ以外は「壊れているか PDF ではない」)。 */
@@ -80,20 +96,31 @@ function announceLayout(deps: RenderDeps, plan: LayoutPlan): void {
   deps.store.dispatch({ type: 'layoutPlanned', scale, width, height, shrunk: plan.shrunk });
 }
 
-/** 描画を 1 回行う。レイアウトが決まったら出力先を用意し、進捗を知らせ、最後まで描けたときだけ完了にする。 */
-async function renderOnce(deps: RenderDeps, pdf: OpenedPdf, signal: AbortSignal): Promise<void> {
-  const { store } = deps;
-  const options: ComposeOptions = {
-    columns: store.getState().columns,
+/** セグメントの描画の設定: 実際の列数(列数とセグメントのページ数の小さい方)、中断の信号、通知の受け取り口。 */
+function composeOptions(deps: RenderDeps, signal: AbortSignal, segment: Segment): ComposeOptions {
+  return {
+    columns: effectiveColumns(deps.store.getState().columns, segment),
     signal,
     limits: deps.limits,
     /** レイアウトの通知を、出力先の用意と状態への反映につなぐ。 */
     onLayout: (plan) => announceLayout(deps, plan),
     /** 1 ページ処理するたびに、進捗を状態に反映する。 */
-    onProgress: (done, total) => store.dispatch({ type: 'progress', done, total }),
+    onProgress: (done, total) => deps.store.dispatch({ type: 'progress', done, total }),
   };
-  const result = await composePages(pdf.source, options);
-  if (result.status === 'done') store.dispatch({ type: 'renderFinished', failedPages: result.failedPages });
+}
+
+/**
+ * 描画を 1 回行う。表示中のセグメントのページだけを描く。レイアウトが決まったら出力先を用意し、進捗を知らせ、
+ * 最後まで描けたときだけ完了にする。失敗したページは、元の PDF のページ番号(0 始まり)にして知らせる。
+ */
+async function renderOnce(deps: RenderDeps, pdf: OpenedPdf, signal: AbortSignal): Promise<void> {
+  const segment = shownSegment(deps.store.getState());
+  if (!segment) return;
+  const source = windowSource(pdf.source, segment.start - 1, segmentPageCount(segment));
+  const result = await composePages(source, composeOptions(deps, signal, segment));
+  if (result.status !== 'done') return;
+  const failedPages = result.failedPages.map((index) => index + segment.start - 1);
+  deps.store.dispatch({ type: 'renderFinished', failedPages });
 }
 
 /** 描画が例外で終わったときの後始末。中断済み(後の操作に置き換えられた)描画の失敗は無視し、今の描画なら、PDF を閉じて、「読み込めなかった」エラーにする。 */
@@ -152,22 +179,107 @@ async function chooseFile<F extends PdfFile>(deps: ControllerDeps<F>, session: S
   if (pdf) await beginRendering(deps, session, pdf);
 }
 
-/** 列数の変更を受け付ける。状態機械が受け入れた(範囲内で、値が変わった)ときだけ、描き直す。 */
-async function setColumns(deps: RenderDeps, session: Session, columns: number): Promise<void> {
+/** 状態を変えるイベント(列数、区切り、表示するセグメントの変更)を送る。状態機械が受け入れた(状態が変わった)ときだけ、描き直す。 */
+async function applyChange(deps: RenderDeps, session: Session, event: AppEvent): Promise<void> {
   const before = deps.store.getState();
-  deps.store.dispatch({ type: 'columnsChanged', columns });
+  deps.store.dispatch(event);
   if (deps.store.getState() === before) return;
   await startRender(deps, session);
 }
 
-/** 状態の入れ物、PDF を開く処理、出力先の準備を受け取って、コントローラを作る。 */
+/** 一括保存の終わり方: 全て保存した(finished)、キャンセルした、PNG を生成できなかった(failed)、状態が外で置き換わった(lost)。 */
+interface BatchOutcome {
+  readonly reason: 'finished' | 'cancelled' | 'failed' | 'lost';
+  readonly index: number;
+  readonly saved: number;
+}
+
+/** 1 つのセグメントの保存の結果: 保存した(saved)、または、一括保存の終わり方(finished 以外)。 */
+type StepResult = 'saved' | 'cancelled' | 'failed' | 'lost';
+
+/**
+ * index 番目のセグメントを表示して描き終え、PNG にして保存する。描画の途中で中断されたとき(cancelled)、
+ * 描画そのものが失敗するなどして状態が外で置き換わったとき(lost)は、保存しない。
+ */
+async function saveSegment(deps: BatchDeps, session: Session, signal: AbortSignal, index: number): Promise<StepResult> {
+  const segments = segmentsOfState(deps.store.getState());
+  await applyChange(deps, session, { type: 'segmentSelected', start: (segments[index] as Segment).start });
+  if (signal.aborted) return 'cancelled';
+  const state = deps.store.getState();
+  if (!state.batch || state.phase !== 'ready') return 'lost';
+  const saved = await deps.saveImage(shownImageName(state));
+  return saved ? 'saved' : 'failed';
+}
+
+/** 全セグメントを、先頭から順に保存する。最初に中断・失敗したところで止まる。 */
+async function saveAllSegments(deps: BatchDeps, session: Session, signal: AbortSignal): Promise<BatchOutcome> {
+  const total = segmentsOfState(deps.store.getState()).length;
+  let saved = 0;
+  for (let index = 0; index < total; index += 1) {
+    if (signal.aborted) return { reason: 'cancelled', index, saved };
+    deps.store.dispatch({ type: 'batchProgressed', index, saved });
+    const step = await saveSegment(deps, session, signal, index);
+    if (step !== 'saved') return { reason: step, index, saved };
+    saved += 1;
+  }
+  return { reason: 'finished', index: total, saved };
+}
+
+/**
+ * 一括保存を終える。元のセグメントを表示に戻してから、終わり方を状態に知らせ(先に戻すのは、表示するセグメントの変更が
+ * 警告を消すため)、描き直しが要るなら描き直す。状態がすでに外で置き換わっている(描画の失敗など)ときは、何もしない。
+ */
+async function finishBatch(deps: BatchDeps, session: Session, origin: number, outcome: BatchOutcome): Promise<void> {
+  const { store } = deps;
+  if (!store.getState().batch) return;
+  store.dispatch({ type: 'segmentSelected', start: origin });
+  const reason = outcome.reason === 'lost' ? 'cancelled' : outcome.reason;
+  store.dispatch(reason === 'finished' ? { type: 'batchFinished' } : { type: 'batchStopped', reason, index: outcome.index, saved: outcome.saved });
+  if (store.getState().phase !== 'ready') await startRender(deps, session);
+}
+
+/** 一括保存を始めて、全セグメントを保存し、終わらせる。始められないとき(状態機械が受け付けないとき、すでに一括保存中)は、何もしない。 */
+async function downloadAll(deps: BatchDeps, session: Session): Promise<void> {
+  if (deps.store.getState().batch) return;
+  const origin = deps.store.getState().segmentStart;
+  deps.store.dispatch({ type: 'batchStarted' });
+  if (!deps.store.getState().batch) return;
+  const abort = new AbortController();
+  session.batchAbort = abort;
+  const outcome = await saveAllSegments(deps, session, abort.signal);
+  session.batchAbort = null;
+  await finishBatch(deps, session, origin, outcome);
+}
+
+/** 一括保存をキャンセルする: 保存の続きを止め、進行中の描画があれば中断する。一括保存中でなければ、何もしない。 */
+function cancelBatch(deps: RenderDeps, session: Session): void {
+  if (!deps.store.getState().batch) return;
+  session.batchAbort?.abort();
+  abortRender(session);
+}
+
+/** 表示するセグメントの選択(利用者の操作)。一括保存中は、無視する。 */
+async function selectSegment(deps: RenderDeps, session: Session, start: number): Promise<void> {
+  if (deps.store.getState().batch) return;
+  await applyChange(deps, session, { type: 'segmentSelected', start });
+}
+
+/** 状態の入れ物、PDF を開く処理、出力先の準備、画像の保存を受け取って、コントローラを作る。 */
 export function createController<F extends PdfFile = PdfFile>(deps: ControllerDeps<F>): Controller<F> {
-  const session: Session = { pdf: null, abort: null, inflight: Promise.resolve(), epoch: 0 };
+  const session: Session = { pdf: null, abort: null, inflight: Promise.resolve(), epoch: 0, batchAbort: null };
   return {
-    /** 選ばれた PDF を読み込んで描く。 */
-    chooseFile: (file) => chooseFile(deps, session, file),
+    /** 選ばれた PDF を読み込んで描く(一括保存中は、無視する)。 */
+    chooseFile: (file) => (deps.store.getState().batch ? Promise.resolve() : chooseFile(deps, session, file)),
     /** 列数の変更を受け付けて、描き直す。 */
-    setColumns: (columns) => setColumns(deps, session, columns),
+    setColumns: (columns) => applyChange(deps, session, { type: 'columnsChanged', columns }),
+    /** 区切りの変更を受け付けて、描き直す。 */
+    setSeparators: (separators) => applyChange(deps, session, { type: 'separatorsChanged', separators }),
+    /** 表示するセグメントを選んで、描き直す。 */
+    selectSegment: (start) => selectSegment(deps, session, start),
+    /** 全セグメントを、セグメントごとの PNG として保存する。 */
+    downloadAll: () => downloadAll(deps, session),
+    /** 一括保存をキャンセルする。 */
+    cancelBatch: () => cancelBatch(deps, session),
     /** 複数ファイルのドロップを拒否する。 */
     rejectDrop: () => deps.store.dispatch({ type: 'dropRejected' }),
   };

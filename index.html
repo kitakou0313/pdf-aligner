@@ -14,6 +14,10 @@
         <label class="field">列数:
           <input type="number" id="columns" min="1" step="1" inputmode="numeric" disabled />
         </label>
+        <label class="field">区切り(各画像の先頭ページ):
+          <input type="text" id="separators" class="separators" placeholder="例: 5, 12, 20" autocomplete="off" spellcheck="false" disabled />
+        </label>
+        <select id="segment" class="segment" aria-label="表示するセグメント" disabled></select>
         <div class="zoom" role="group" aria-label="ズーム">
           <button type="button" id="zoom-out" aria-label="縮小">−</button>
           <button type="button" id="zoom-level" class="zoom-level" title="押すと 100% にします">100%</button>
@@ -21,6 +25,7 @@
           <button type="button" id="zoom-fit">画面に合わせる</button>
         </div>
         <button type="button" id="download">PNGをダウンロード</button>
+        <button type="button" id="download-all" title="Chrome が複数ファイルのダウンロードの確認を出したら、「許可」を選んでください" disabled>すべてダウンロード</button>
       </header>
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <main id="preview" class="preview" tabindex="0">

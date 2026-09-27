@@ -100,25 +100,66 @@ function failAt(...bad: number[]): Behavior {
   };
 }
 
+/** 保存を求められた時点の記録: ファイル名と、そのときの状態(完了しているか、どのセグメントを表示しているか)。 */
+interface SaveRequest {
+  readonly name: string;
+  readonly phase: string;
+  readonly segmentStart: number;
+}
+
 interface Kit {
   readonly store: Store<AppState, AppEvent>;
   readonly controller: Controller;
   readonly prepared: Layout[];
   readonly phases: string[];
+  readonly requests: SaveRequest[];
+}
+
+/** setup の追加動作(出力先の準備の後に行うこと、保存の結果)。 */
+interface SetupExtra {
+  readonly prepare?: (layout: Layout) => void;
+  /** 保存の結果(既定は、常に成功)。 */
+  readonly saveImage?: (name: string) => Promise<boolean>;
+}
+
+/** 状態の phase の変化を、順に記録する配列を作る(最初の phase を含む)。 */
+function trackPhases(store: Store<AppState, AppEvent>): string[] {
+  const phases: string[] = [store.getState().phase];
+  store.subscribe((state) => phases.push(state.phase));
+  return phases;
+}
+
+/** 保存を求められた時点の状態を requests に記録してから、結果(result。既定は成功)を返す saveImage を作る。 */
+function recordingSaver(
+  store: Store<AppState, AppEvent>,
+  requests: SaveRequest[],
+  result?: (name: string) => Promise<boolean>,
+): (name: string) => Promise<boolean> {
+  return async (name) => {
+    const { phase, segmentStart } = store.getState();
+    requests.push({ name, phase, segmentStart });
+    return result ? result(name) : true;
+  };
+}
+
+/** 常に保存に成功する saveImage。 */
+async function alwaysSaves(): Promise<boolean> {
+  return true;
 }
 
 /** ストア、コントローラ、記録用の入れ物を組み立てる。open は、ファイルごとに用意した PDF(または例外)を返す。 */
-function setup(open: (file: PdfFile) => Promise<OpenedPdf>, extra: { prepare?: (layout: Layout) => void } = {}): Kit {
+function setup(open: (file: PdfFile) => Promise<OpenedPdf>, extra: SetupExtra = {}): Kit {
   const store = createStore(INITIAL_STATE, reduce);
   const prepared: Layout[] = [];
-  const phases: string[] = [store.getState().phase];
-  store.subscribe((state) => phases.push(state.phase));
+  const requests: SaveRequest[] = [];
+  const phases = trackPhases(store);
   /** 渡されたレイアウトを記録してから、追加動作(あれば)を行う。 */
   const prepare = (layout: Layout): void => {
     prepared.push(layout);
     extra.prepare?.(layout);
   };
-  return { store, controller: createController({ store, open, prepare }), prepared, phases };
+  const saveImage = recordingSaver(store, requests, extra.saveImage);
+  return { store, controller: createController({ store, open, prepare, saveImage }), prepared, phases, requests };
 }
 
 /** 常に同じ PDF を返す open。 */
@@ -184,7 +225,7 @@ describe('PDF の選択 → 読み込み → 描画 → 完了', () => {
     const prepared: Layout[] = [];
     const limits = { maxSide: 4000, maxArea: 4_000_000 };
     const prepare = prepared.push.bind(prepared);
-    const controller = createController({ store, open: alwaysOpens(new FakePdf(12)), prepare, limits });
+    const controller = createController({ store, open: alwaysOpens(new FakePdf(12)), prepare, saveImage: alwaysSaves, limits });
     await controller.chooseFile(file('big.pdf'));
     expect(prepared[0]?.scale).toBeLessThan(2);
     expect(store.getState().shrink).toMatchObject({ scale: prepared[0]?.scale, width: prepared[0]?.width });
@@ -436,5 +477,272 @@ describe('複数ファイルのドロップ(rejectDrop)', () => {
     await controller.chooseFile(file('b.pdf'));
     await first;
     expect(store.getState().error).toBeNull();
+  });
+});
+
+describe('区切りと、表示するセグメント', () => {
+  /** 20 ページの PDF を描き終えた状態のキットを返す(列数の既定は 10。区切りはまだない)。 */
+  async function ready20(pdf: FakePdf = new FakePdf(20)): Promise<{ kit: Kit; pdf: FakePdf }> {
+    const kit = setup(alwaysOpens(pdf));
+    await kit.controller.chooseFile(file('report.pdf'));
+    return { kit, pdf };
+  }
+
+  /** 元のページ番号(0 始まり)が first から count 個続く配列。 */
+  function pagesFrom(first: number, count: number): number[] {
+    return Array.from({ length: count }, (_, index) => first + index);
+  }
+
+  it('区切りを設定すると、表示中(先頭)のセグメントのページだけを、そのセグメントの実際の列数で描き直して、また完了する', async () => {
+    const { kit, pdf } = await ready20();
+    pdf.source.calls.length = 0;
+    await kit.controller.setSeparators([5, 8]);
+    expect(pdf.source.calls).toEqual([0, 1, 2, 3]);
+    expect(kit.prepared.at(-1)).toEqual(computeLayout(repeat(A4, 4), 4, 2));
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', separators: [5, 8], segmentStart: 1 });
+  });
+
+  it('セグメントを選ぶと、そのセグメントのページ(元の番号)だけを描く。列数は「列数とページ数の小さい方」', async () => {
+    const { kit, pdf } = await ready20();
+    await kit.controller.setSeparators([5, 8]);
+    pdf.source.calls.length = 0;
+    await kit.controller.selectSegment(8);
+    expect(pdf.source.calls).toEqual(pagesFrom(7, 13));
+    expect(kit.prepared.at(-1)).toEqual(computeLayout(repeat(A4, 13), 10, 2));
+    pdf.source.calls.length = 0;
+    await kit.controller.selectSegment(5);
+    expect(pdf.source.calls).toEqual([4, 5, 6]);
+    expect(kit.prepared.at(-1)).toEqual(computeLayout(repeat(A4, 3), 3, 2));
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 5 });
+  });
+
+  it('列数を変えると、表示中のセグメントだけを、「列数とページ数の小さい方」の列数で描き直す', async () => {
+    const { kit, pdf } = await ready20();
+    await kit.controller.setSeparators([5, 8]);
+    await kit.controller.selectSegment(5);
+    pdf.source.calls.length = 0;
+    await kit.controller.setColumns(2);
+    expect(kit.prepared.at(-1)?.columns).toBe(2);
+    expect(pdf.source.calls).toEqual([4, 5, 6]);
+    await kit.controller.setColumns(6);
+    expect(kit.prepared.at(-1)?.columns).toBe(3);
+  });
+
+  it('失敗したページは、元の PDF のページ番号(0 始まり)で記録する(セグメントの中の番号ではない)', async () => {
+    const { kit } = await ready20(new FakePdf(20, failAt(6)));
+    expect(kit.store.getState().failedPages).toEqual([6]);
+    await kit.controller.setSeparators([5, 8]);
+    expect(kit.store.getState().failedPages, 'p.1–4 には、失敗したページ(7 ページ目)がない').toEqual([]);
+    await kit.controller.selectSegment(5);
+    expect(kit.store.getState().failedPages).toEqual([6]);
+    await kit.controller.selectSegment(8);
+    expect(kit.store.getState().failedPages).toEqual([]);
+  });
+
+  it('進捗の総数は、表示中のセグメントのページ数', async () => {
+    const { kit } = await ready20();
+    await kit.controller.setSeparators([5, 8]);
+    const totals: number[] = [];
+    kit.store.subscribe((state) => state.phase === 'rendering' && totals.push(state.progress.total));
+    await kit.controller.selectSegment(8);
+    expect(new Set(totals)).toEqual(new Set([13]));
+  });
+
+  it('描画中に区切りを変えると、進行中の描画を中断して、新しい区切りの先頭のセグメントを最初から描き直す', async () => {
+    const pdf = new FakePdf(20, hangAt(5));
+    const kit = setup(alwaysOpens(pdf));
+    const first = kit.controller.chooseFile(file('report.pdf'));
+    await vi.waitFor(() => expect(pdf.source.calls).toHaveLength(6));
+    pdf.source.calls.length = 0;
+    await kit.controller.setSeparators([5]);
+    await first;
+    expect(pdf.source.calls).toEqual([0, 1, 2, 3]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', separators: [5], segmentStart: 1 });
+  });
+
+  it('描画中にセグメントを選ぶと、進行中の描画を中断して、選んだセグメントを最初から描く。中断した描画の続きは描かれない', async () => {
+    const flag = { hang: false };
+    /** flag.hang が true の間だけ、元の 10 ページ目(0 始まりの 9)で、中断されるまで待つ。 */
+    const hangOnPage9: Behavior = (index, signal) => (flag.hang && index === 9 ? hangUntilAborted()(index, signal) : Promise.resolve());
+    const { kit, pdf } = await ready20(new FakePdf(20, hangOnPage9));
+    await kit.controller.setSeparators([5, 8]);
+    flag.hang = true;
+    const slow = kit.controller.selectSegment(8);
+    await vi.waitFor(() => expect(pdf.source.calls.at(-1)).toBe(9));
+    flag.hang = false;
+    pdf.source.calls.length = 0;
+    await kit.controller.selectSegment(5);
+    await slow;
+    expect(pdf.source.calls).toEqual([4, 5, 6]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 5 });
+  });
+
+  it('同じ区切り、正規化されていない区切り、セグメントの先頭でないページ、表示中と同じセグメントは、何もしない(描き直さない)', async () => {
+    const { kit, pdf } = await ready20();
+    await kit.controller.setSeparators([5, 8]);
+    const before = { prepared: kit.prepared.length, calls: pdf.source.calls.length };
+    for (const separators of [[5, 8], [8, 5], [5, 5], [1], [99]]) await kit.controller.setSeparators(separators);
+    for (const start of [1, 6, 0, 99]) await kit.controller.selectSegment(start);
+    expect(kit.prepared).toHaveLength(before.prepared);
+    expect(pdf.source.calls).toHaveLength(before.calls);
+    expect(kit.store.getState().separators).toEqual([5, 8]);
+  });
+
+  it('PDF を読み込む前は、何もしない', async () => {
+    const kit = setup(alwaysOpens(new FakePdf(20)));
+    await kit.controller.setSeparators([5]);
+    await kit.controller.selectSegment(5);
+    expect(kit.store.getState().phase).toBe('idle');
+    expect(kit.prepared).toEqual([]);
+  });
+});
+
+describe('一括保存(downloadAll / cancelBatch)', () => {
+  /** 20 ページの PDF を、区切り 5, 8(p.1–4 / p.5–7 / p.8–20)で分けて、先頭のセグメントを描き終えた状態のキットを返す。 */
+  async function splitKit(extra: SetupExtra = {}, pdf: FakePdf = new FakePdf(20)): Promise<{ kit: Kit; pdf: FakePdf }> {
+    const kit = setup(alwaysOpens(pdf), extra);
+    await kit.controller.chooseFile(file('report.pdf'));
+    await kit.controller.setSeparators([5, 8]);
+    return { kit, pdf };
+  }
+
+  it('全セグメントを、先頭から順に、表示して描き終えてから保存する。名前は、そのセグメントの実際の列数つき。終わったら、元のセグメントに戻る', async () => {
+    const { kit } = await splitKit();
+    await kit.controller.downloadAll();
+    expect(kit.requests).toEqual([
+      { name: 'report-p01-04-4cols.png', phase: 'ready', segmentStart: 1 },
+      { name: 'report-p05-07-3cols.png', phase: 'ready', segmentStart: 5 },
+      { name: 'report-p08-20-10cols.png', phase: 'ready', segmentStart: 8 },
+    ]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 1, batch: null, batchStop: null });
+  });
+
+  it('元のセグメントが先頭でないときも、終わったらそのセグメントに戻り、その画像を描き直してある(canvas はそのセグメントの内容)', async () => {
+    const { kit, pdf } = await splitKit();
+    await kit.controller.selectSegment(5);
+    await kit.controller.downloadAll();
+    expect(kit.requests.map((request) => request.segmentStart)).toEqual([1, 5, 8]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 5 });
+    expect(kit.prepared.at(-1)).toEqual(computeLayout(repeat(A4, 3), 3, 2));
+    expect(pdf.source.calls.slice(-3)).toEqual([4, 5, 6]);
+  });
+
+  it('進捗は、処理中のセグメントの番号と、保存した個数が、順に進む', async () => {
+    const { kit } = await splitKit();
+    const seen: string[] = [];
+    kit.store.subscribe(({ batch }) => batch && seen.push(`${batch.index}:${batch.saved}`));
+    await kit.controller.downloadAll();
+    expect([...new Set(seen)]).toEqual(['0:0', '1:1', '2:2']);
+  });
+
+  it('終わったあとも、もう一度実行できる', async () => {
+    const { kit } = await splitKit();
+    await kit.controller.downloadAll();
+    await kit.controller.downloadAll();
+    expect(kit.requests).toHaveLength(6);
+  });
+
+  it('始められないとき(区切りなし、描画中)は、何もしない', async () => {
+    const { kit } = await splitKit();
+    await kit.controller.setSeparators([]);
+    const before = kit.store.getState();
+    await kit.controller.downloadAll();
+    expect(kit.requests).toEqual([]);
+    expect(kit.store.getState()).toBe(before);
+    const pdf = new FakePdf(20, hangAt(2));
+    const rendering = setup(alwaysOpens(pdf));
+    const first = rendering.controller.chooseFile(file('report.pdf'));
+    await vi.waitFor(() => expect(pdf.source.calls).toHaveLength(3));
+    await rendering.controller.downloadAll();
+    expect(rendering.requests).toEqual([]);
+    await rendering.controller.chooseFile(file('report.pdf'));
+    await first;
+  });
+
+  it('保存の途中でキャンセルすると、その保存が終わってから止まる。保存した個数を持ち、以降は保存しない。元のセグメントに戻る', async () => {
+    const gate = new Gate<boolean>();
+    let requested = 0;
+    /** 2 回目の保存だけ、gate が開くまで待たせる。 */
+    const saveImage = (): Promise<boolean> => (++requested === 2 ? gate.promise : Promise.resolve(true));
+    const { kit, pdf } = await splitKit({ saveImage });
+    const all = kit.controller.downloadAll();
+    await vi.waitFor(() => expect(kit.requests).toHaveLength(2));
+    kit.controller.cancelBatch();
+    const drawnBeforeCancelDone = pdf.source.calls.length;
+    gate.resolve(true);
+    await all;
+    expect(kit.requests, '3 個目は、保存しない').toHaveLength(2);
+    expect(pdf.source.calls.slice(drawnBeforeCancelDone), '3 個目のセグメントは、描き始めない。描くのは、元のセグメント(p.1–4)に戻すときだけ').toEqual([0, 1, 2, 3]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 1, batch: null });
+    expect(kit.store.getState().batchStop).toEqual({ reason: 'cancelled', saved: 2, total: 3, segment: null });
+  });
+
+  it('描画の途中でキャンセルすると、描画を中断して、保存せずに止まる。それまでに保存した個数を持ち、元のセグメントを描き直して完了する', async () => {
+    const flag = { hang: false };
+    /** flag.hang が true の間だけ、元の 5 ページ目(0 始まりの 4)で、中断されるまで待つ。 */
+    const hangOnPage4: Behavior = (index, signal) => (flag.hang && index === 4 ? hangUntilAborted()(index, signal) : Promise.resolve());
+    const { kit, pdf } = await splitKit({}, new FakePdf(20, hangOnPage4));
+    flag.hang = true;
+    const all = kit.controller.downloadAll();
+    await vi.waitFor(() => expect(pdf.source.calls.at(-1)).toBe(4));
+    kit.controller.cancelBatch();
+    flag.hang = false;
+    await all;
+    expect(kit.requests).toHaveLength(1);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 1, batch: null });
+    expect(kit.store.getState().batchStop).toEqual({ reason: 'cancelled', saved: 1, total: 3, segment: null });
+  });
+
+  it('PNG を生成できなかったら、そこで止まり、以降は保存しない。それまでに保存した個数と、生成できなかったセグメントを持つ', async () => {
+    /** 2 番目のセグメント(p.5–7)の PNG だけ、生成できなかったことにする。 */
+    const saveImage = async (name: string): Promise<boolean> => !name.includes('p05-07');
+    const { kit } = await splitKit({ saveImage });
+    await kit.controller.downloadAll();
+    expect(kit.requests.map((request) => request.name)).toEqual(['report-p01-04-4cols.png', 'report-p05-07-3cols.png']);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', segmentStart: 1, batch: null });
+    expect(kit.store.getState().batchStop).toEqual({ reason: 'failed', saved: 1, total: 3, segment: { start: 5, end: 7 } });
+  });
+
+  it('保存中は、列数・区切り・セグメントの選択・複数ファイルのドロップ・別の PDF の選択を、受け付けない(状態は変わらず、PDF も開き直さない)', async () => {
+    const gate = new Gate<boolean>();
+    const open = vi.fn(alwaysOpens(new FakePdf(20)));
+    /** gate が開くまで、保存を待たせる。 */
+    const saveImage = (): Promise<boolean> => gate.promise;
+    const kit = setup(open, { saveImage });
+    await kit.controller.chooseFile(file('report.pdf'));
+    await kit.controller.setSeparators([5, 8]);
+    const all = kit.controller.downloadAll();
+    await vi.waitFor(() => expect(kit.requests).toHaveLength(1));
+    const during = kit.store.getState();
+    await kit.controller.setColumns(3);
+    await kit.controller.setSeparators([5]);
+    await kit.controller.selectSegment(5);
+    kit.controller.rejectDrop();
+    await kit.controller.chooseFile(file('other.pdf'));
+    expect(kit.store.getState()).toBe(during);
+    expect(open).toHaveBeenCalledTimes(1);
+    gate.resolve(true);
+    await all;
+    expect(kit.requests).toHaveLength(3);
+  });
+
+  it('保存の途中で描画そのものが失敗したら、一括保存は終わる(未読み込みに戻り、以降は保存しない。警告は残さない)', async () => {
+    const pdf = new FakePdf(20);
+    /** 3 ページのセグメント(p.5–7)の出力先の準備で、例外を投げる。 */
+    const prepare = (layout: Layout): void => {
+      if (layout.placements.length === 3) throw new Error('canvas broke');
+    };
+    const { kit } = await splitKit({ prepare }, pdf);
+    await kit.controller.downloadAll();
+    expect(kit.requests).toHaveLength(1);
+    expect(kit.store.getState()).toMatchObject({ phase: 'idle', error: 'invalid', batch: null, batchStop: null });
+    expect(pdf.closed).toBe(1);
+  });
+
+  it('一括保存中でなければ、cancelBatch は何もしない', async () => {
+    const { kit } = await splitKit();
+    const before = kit.store.getState();
+    kit.controller.cancelBatch();
+    expect(kit.store.getState()).toBe(before);
   });
 });

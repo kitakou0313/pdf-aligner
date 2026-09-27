@@ -16,17 +16,27 @@ export class FakeSource implements PageSource {
   private inFlight = 0;
   private readonly sizes: readonly PageSize[];
   private readonly behavior: Behavior;
+  private readonly unreadable: ReadonlySet<number>;
 
-  /** 各ページの大きさと、描画の振る舞い(既定は即座に成功)から、偽物を作る。 */
-  constructor(sizes: readonly PageSize[], behavior: Behavior = succeedNow) {
+  /**
+   * 各ページの大きさ、描画の振る舞い(既定は即座に成功)、大きさが読めなかったページ(0 始まり。既定はなし)から、偽物を作る。
+   * 読めなかったページの大きさ(sizes の要素)は、本物と同じく、代わりの大きさを渡す。
+   */
+  constructor(sizes: readonly PageSize[], behavior: Behavior = succeedNow, unreadable: readonly number[] = []) {
     this.sizes = sizes;
     this.pageCount = sizes.length;
     this.behavior = behavior;
+    this.unreadable = new Set(unreadable);
   }
 
   /** n ページ目の大きさ。 */
   pageSize(index: number): PageSize {
     return this.sizes[index] as PageSize;
+  }
+
+  /** n ページ目の大きさが読めたか。 */
+  isReadable(index: number): boolean {
+    return !this.unreadable.has(index);
   }
 
   /** 呼び出しを記録し、同時に走る描画の数を数えながら、決めた振る舞いを実行する。 */

@@ -3,6 +3,9 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   ERROR_TEXT,
   LOADING_TEXT,
+  formatBatchCancelled,
+  formatBatchFailed,
+  formatBatchProgress,
   formatFailedPages,
   formatProgress,
   formatShrinkNotice,
@@ -29,6 +32,33 @@ describe('メッセージの文言(blueprint の F8 と一致する)', () => {
       pngFailed: '画像が大きすぎて PNG を生成できませんでした。列数を変更するか、PDF を分割してお試しください。',
     });
     expect(LOADING_TEXT).toBe('読み込み中…');
+  });
+
+  it('一括保存の文言は、blueprint の例 9 の表に、そのまま載っている', () => {
+    for (const text of [formatBatchProgress(1, 3, 'p.1–4'), formatBatchProgress(2, 3, 'p.5–7'), formatBatchCancelled(1, 3), formatBatchFailed('p.8–20', 2, 3)]) {
+      expect(blueprint, text).toContain(text);
+    }
+  });
+
+  it('一括保存の文言の雛形(N、K を含む)は、blueprint の F8 の表に載っている', () => {
+    for (const template of ['保存中 K/N 個(p.5–7)', '保存をキャンセルしました。N 個中 K 個を保存しました。', 'p.8–20 の画像が大きすぎて PNG を生成できませんでした。N 個中 K 個を保存しました。']) {
+      expect(blueprint, template).toContain(template);
+    }
+  });
+});
+
+describe('一括保存の文言(blueprint の F8、例 9)', () => {
+  it('formatBatchProgress は「保存中 K/N 個(範囲)」(K は 1 始まりの、処理中のセグメントの番号)', () => {
+    expect(formatBatchProgress(2, 3, 'p.5–7')).toBe('保存中 2/3 個(p.5–7)');
+  });
+
+  it('formatBatchCancelled は、キャンセルしたことと、保存した個数', () => {
+    expect(formatBatchCancelled(1, 3)).toBe('保存をキャンセルしました。3 個中 1 個を保存しました。');
+    expect(formatBatchCancelled(0, 2)).toBe('保存をキャンセルしました。2 個中 0 個を保存しました。');
+  });
+
+  it('formatBatchFailed は、PNG を生成できなかったセグメントの範囲と、保存した個数', () => {
+    expect(formatBatchFailed('p.8–20', 2, 3)).toBe('p.8–20 の画像が大きすぎて PNG を生成できませんでした。3 個中 2 個を保存しました。');
   });
 });
 

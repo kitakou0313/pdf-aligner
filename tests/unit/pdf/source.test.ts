@@ -69,14 +69,15 @@ function surfaceOf(ctx: { drawImage: Mock }): RenderSurface {
 }
 
 /** 偽物の pdf.js(文書、ページ、描画タスク)と、偽物の canvas を組み立てる。task の完了は、渡した Promise で決める。 */
-function harness(taskPromise: Promise<void> = Promise.resolve(), pageCount = 3): Harness {
+function harness(taskPromise: Promise<void> = Promise.resolve(), pageCount = 3, unreadable: readonly number[] = []): Harness {
   const task: FakeTask = { promise: taskPromise, cancel: vi.fn() };
   const page = fakePage(task);
   const getPage = vi.fn(async () => page);
   const finalCtx = { drawImage: vi.fn() };
   const surface = surfaceOf(finalCtx);
   const { scratch, created, make } = fakeScratch();
-  const source = createPageSource({ getPage } as unknown as PDFDocumentProxy, Array(pageCount).fill(A4), surface, make);
+  const sizes = { sizes: Array(pageCount).fill(A4), readable: Array.from({ length: pageCount }, (_, i) => !unreadable.includes(i)) };
+  const source = createPageSource({ getPage } as unknown as PDFDocumentProxy, sizes, surface, make);
   return { source, finalCtx, scratch, page, getPage, task, created };
 }
 
@@ -102,6 +103,12 @@ describe('createPageSource', () => {
     const { source } = harness(undefined, 5);
     expect(source.pageCount).toBe(5);
     expect(source.pageSize(4)).toEqual(A4);
+  });
+
+  it('大きさが読めたかどうかを、渡された値のとおりに返す(読めなかったページの大きさは、渡された代わりの大きさ)', () => {
+    const { source } = harness(undefined, 4, [1, 3]);
+    expect([0, 1, 2, 3].map((index) => source.isReadable(index))).toEqual([true, false, true, false]);
+    expect(source.pageSize(1)).toEqual(A4);
   });
 
   it('作業用の canvas を配置の大きさにして、そこに(倍率 1 の表示領域と、矩形に収める変換で)描き、終わったら最終の canvas の配置の位置へ等倍で転送する', async () => {

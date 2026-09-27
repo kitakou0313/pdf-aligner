@@ -5,7 +5,7 @@ import { toOpenFailure } from './errors.ts';
 import { readPageSizes } from './page-sizes.ts';
 import { createPageSource, type RenderSurface } from './source.ts';
 
-/** 開いた文書から、描画元(ページの大きさは、ここで全ページ分を読む)と、閉じる処理を作る。 */
+/** 開いた文書から、描画元(ページの大きさと、読めたかどうかは、ここで全ページ分を読む)と、閉じる処理を作る。 */
 async function wrap(doc: PDFDocumentProxy, surface: RenderSurface): Promise<OpenedPdf> {
   const source = createPageSource(doc, await readPageSizes(doc), surface);
   return {

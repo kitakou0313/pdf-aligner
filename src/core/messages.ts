@@ -17,6 +17,21 @@ export function formatProgress(done: number, total: number): string {
   return `描画中 ${done}/${total} ページ`;
 }
 
+/** 一括保存中の進捗(保存中 K/N 個(範囲))の文言を作る。current は、処理中のセグメントの番号(1 始まり)。 */
+export function formatBatchProgress(current: number, total: number, range: string): string {
+  return `保存中 ${current}/${total} 個(${range})`;
+}
+
+/** 一括保存をキャンセルしたときの警告の文言を作る。saved は、保存した個数。 */
+export function formatBatchCancelled(saved: number, total: number): string {
+  return `保存をキャンセルしました。${total} 個中 ${saved} 個を保存しました。`;
+}
+
+/** 一括保存で、あるセグメント(range はそのページ範囲)の PNG を生成できなかったときの警告の文言を作る。 */
+export function formatBatchFailed(range: string, saved: number, total: number): string {
+  return `${range} の画像が大きすぎて PNG を生成できませんでした。${total} 個中 ${saved} 個を保存しました。`;
+}
+
 /** 数を 3 桁区切りの文字列にする(表示が環境に依存しないよう、ロケールを固定する)。 */
 function withCommas(value: number): string {
   return value.toLocaleString('en-US');

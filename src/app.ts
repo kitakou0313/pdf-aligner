@@ -1,9 +1,11 @@
 import { createColumnsInput, type ColumnsInput } from './core/columns-input.ts';
 import { createController, type Controller } from './core/controller.ts';
 import { dropAction } from './core/drop.ts';
-import { downloadFileName } from './core/filename.ts';
 import type { Layout } from './core/layout.ts';
-import { INITIAL_STATE, reduce, statusLines, uiFlags, type AppEvent, type AppState } from './core/state.ts';
+import { segmentLabel } from './core/segments.ts';
+import { createSeparatorsInput, type SeparatorsInput } from './core/separators-input.ts';
+import { formatSeparators } from './core/separators.ts';
+import { INITIAL_STATE, reduce, segmentsOfState, shownImageName, statusLines, uiFlags, type AppEvent, type AppState } from './core/state.ts';
 import { createStore, type Store } from './core/store.ts';
 import { ZoomController } from './core/zoom-controller.ts';
 import { wheelZoomFactor, zoomAnchoredScroll, type Point } from './core/zoom.ts';
@@ -13,8 +15,14 @@ import { bindDropzone, blockStrayDrops } from './view/dropzone.ts';
 import { canvasToPng, saveBlob } from './view/download.ts';
 import { createPreview, type Preview } from './view/preview.ts';
 import { renderStatus } from './view/status.ts';
-import { bindToolbar, type Toolbar, type ToolbarHandlers } from './view/toolbar.ts';
+import { bindToolbar, type SegmentOption, type Toolbar, type ToolbarHandlers, type ToolbarModel } from './view/toolbar.ts';
 import { watchDevicePixelRatio } from './view/viewport.ts';
+
+/** セグメントのセレクタの選択肢(ラベルと先頭ページ)を、状態から作る。 */
+function segmentOptions(state: AppState): SegmentOption[] {
+  const segments = segmentsOfState(state);
+  return segments.map((segment, index) => ({ label: segmentLabel(segment, index, segments.length), start: segment.start }));
+}
 
 /** 状態を持たない配線役。状態は store が、判断は core が、DOM の操作は view が持つ。ここは、それらをつなぐだけ。 */
 class App implements ToolbarHandlers {
@@ -25,6 +33,7 @@ class App implements ToolbarHandlers {
   private readonly statusLine: HTMLElement;
   private readonly controller: Controller<File>;
   private readonly columns: ColumnsInput;
+  private readonly separators: SeparatorsInput;
 
   /** index.html の要素に、各部品を結びつけ、状態の変化を画面に反映するようにする。 */
   constructor(root: HTMLElement) {
@@ -32,14 +41,22 @@ class App implements ToolbarHandlers {
     this.statusLine = requireElement(root, '#status');
     this.controller = this.buildController();
     this.columns = this.buildColumnsInput();
+    this.separators = this.buildSeparatorsInput();
     this.toolbar = bindToolbar(root, this);
     this.connect(requireElement(root, '#preview'));
   }
 
-  /** 読み込みと描画を調停するコントローラを、状態の入れ物・PDF を開く処理・出力先の準備につないで作る。 */
+  /** 読み込みと描画を調停するコントローラを、状態の入れ物・PDF を開く処理・出力先の準備・画像の保存につないで作る。 */
   private buildController(): Controller<File> {
     const open = this.openFile.bind(this);
-    return createController<File>({ store: this.store, open, prepare: this.onPrepare.bind(this) });
+    const [prepare, saveImage] = [this.onPrepare.bind(this), this.saveImage.bind(this)];
+    return createController<File>({ store: this.store, open, prepare, saveImage });
+  }
+
+  /** 区切りの入力欄の規則を、状態・区切りの反映・欄への書き戻しにつないで作る。 */
+  private buildSeparatorsInput(): SeparatorsInput {
+    const state = this.store.getState.bind(this.store);
+    return createSeparatorsInput({ state, apply: this.applySeparators.bind(this), write: this.writeSeparators.bind(this) });
   }
 
   /** 列数の入力欄の規則を、状態・列数の反映・欄への書き戻しにつないで作る。 */
@@ -61,6 +78,16 @@ class App implements ToolbarHandlers {
   /** 列数の欄に、丸めた値を書き戻す。 */
   private writeColumns(columns: number): void {
     this.toolbar.writeColumns(columns);
+  }
+
+  /** 区切りの変更を反映する(表示するセグメントを描き直す)。 */
+  private applySeparators(separators: number[]): void {
+    void this.controller.setSeparators(separators);
+  }
+
+  /** 区切りの欄に、整えた文字列を書き戻す。 */
+  private writeSeparators(text: string): void {
+    this.toolbar.writeSeparators(text);
   }
 
   /** 状態の変化、ドロップ、領域の大きさと画面の密度の変化を、画面に反映するようにつなぎ、最初の表示を行う。 */
@@ -98,12 +125,23 @@ class App implements ToolbarHandlers {
     this.renderToolbar(this.store.getState());
   }
 
-  /** ツールバーに、操作の可否、列数、倍率を反映する(PDF を読み込むまでは、列数の欄は空)。 */
+  /** ツールバーに、操作の可否、列数と区切りの欄、セグメントの選択肢、倍率を反映する。 */
   private renderToolbar(state: AppState): void {
+    this.toolbar.render(this.toolbarModel(state));
+  }
+
+  /** 状態から、ツールバーの表示内容を作る(PDF を読み込むまでは、列数と区切りの欄は空)。 */
+  private toolbarModel(state: AppState): ToolbarModel {
     const active = state.phase === 'rendering' || state.phase === 'ready';
-    const columnsText = active ? String(state.columns) : '';
-    const zoomLabel = this.zoom.view()?.label ?? '100%';
-    this.toolbar.render({ flags: uiFlags(state), columnsText, pageCount: state.pageCount, zoomLabel });
+    return {
+      flags: uiFlags(state),
+      columnsText: active ? String(state.columns) : '',
+      separatorsText: active ? formatSeparators(state.separators) : '',
+      segments: segmentOptions(state),
+      segmentStart: state.segmentStart,
+      pageCount: state.pageCount,
+      zoomLabel: this.zoom.view()?.label ?? '100%',
+    };
   }
 
   /** ドロップされたファイルを、本数に応じて、読み込む・拒否する・無視する。 */
@@ -113,8 +151,9 @@ class App implements ToolbarHandlers {
     if (action === 'choose') this.chooseFile(files[0] as File);
   }
 
-  /** 選ばれた PDF を読み込む。倍率は「画面に合わせる」に戻す。 */
+  /** 選ばれた PDF を読み込む。倍率は「画面に合わせる」に戻す(一括保存中は、何もしない)。 */
   chooseFile(file: File): void {
+    if (this.store.getState().batch) return;
     this.zoom.reset();
     void this.controller.chooseFile(file);
   }
@@ -127,6 +166,21 @@ class App implements ToolbarHandlers {
   /** 列数の確定。 */
   columnsCommit(raw: string): void {
     this.columns.onCommit(raw);
+  }
+
+  /** 区切りの入力の途中。 */
+  separatorsInput(raw: string): void {
+    this.separators.onInput(raw);
+  }
+
+  /** 区切りの確定。 */
+  separatorsCommit(raw: string): void {
+    this.separators.onCommit(raw);
+  }
+
+  /** セグメントの選択(start は、選ばれたセグメントの先頭ページ)。 */
+  segmentSelected(start: number): void {
+    void this.controller.selectSegment(start);
   }
 
   /** ＋ボタン: 領域の中央の点を保って、1 段階拡大する。 */
@@ -180,13 +234,24 @@ class App implements ToolbarHandlers {
     void this.savePng();
   }
 
-  /** 完了した画像を PNG にして保存する(canvas はプレビューと同じ 1 枚)。 */
+  /** 完了した画像(表示中のセグメント)を PNG にして保存する(canvas はプレビューと同じ 1 枚)。 */
   private async savePng(): Promise<void> {
-    const { phase, fileName, columns } = this.store.getState();
-    if (phase !== 'ready' || fileName === null) return;
+    const state = this.store.getState();
+    if (state.phase !== 'ready' || state.fileName === null) return;
+    if (!(await this.saveImage(shownImageName(state)))) this.store.dispatch({ type: 'pngFailed' });
+  }
+
+  /** 「すべてダウンロード」のボタン: 一括保存を始める。一括保存中は、キャンセルになる。 */
+  downloadAll(): void {
+    if (this.store.getState().batch) this.controller.cancelBatch();
+    else void this.controller.downloadAll();
+  }
+
+  /** 今の出力画像(プレビューと同じ canvas)を、指定した名前の PNG として保存する。PNG を生成できなかったときは、保存せずに false。 */
+  private async saveImage(fileName: string): Promise<boolean> {
     const blob = await canvasToPng(this.preview.canvas);
-    if (blob) saveBlob(blob, downloadFileName(fileName, columns));
-    else this.store.dispatch({ type: 'pngFailed' });
+    if (blob) saveBlob(blob, fileName);
+    return blob !== null;
   }
 }
 

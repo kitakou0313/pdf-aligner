@@ -4,8 +4,10 @@ import type { CanvasLimits } from './limits.ts';
 /** ページの供給元。pdf.js の実物は pdf/ 層が、テストでは偽物が、この形で提供する。 */
 export interface PageSource {
   readonly pageCount: number;
-  /** n ページ目の大きさ(pt)。 */
+  /** n ページ目の大きさ(pt)。読めなかったページ(isReadable が false)は、代わりの大きさ。 */
   pageSize(index: number): PageSize;
+  /** n ページ目の大きさが読めたか(読めなかったページは、壊れたページ)。 */
+  isReadable(index: number): boolean;
   /** n ページ目を、出力画像の placement の位置・大きさで描く(白で塗ってから描く責務も、ここにある)。 */
   renderPage(index: number, placement: Placement, signal: AbortSignal): Promise<void>;
 }
