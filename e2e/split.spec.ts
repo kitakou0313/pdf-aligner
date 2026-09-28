@@ -191,7 +191,8 @@ test('ダウンロードした PNG は、表示中のセグメントの canvas �
     expect({ width: png.width, height: png.height }).toEqual({ width: grid.width, height: grid.height });
     expect({ width: png.width, height: png.height, sha256: pngHash(png) }).toEqual(await canvasHash(page));
     expect([fileName, png.opaque]).toEqual([segment.fileName, true]);
-    await expect(page.locator('canvas')).toHaveCount(1);
+    // 出力画像の canvas(#canvas)は常に 1 枚。元PDFプレビュー(F11)のサムネイルは、別の canvas を持つ
+    await expect(page.locator('#canvas')).toHaveCount(1);
   }
 });
 
@@ -293,7 +294,8 @@ test.describe('すべてダウンロード(一括保存。blueprint の F10、�
     await expectSegmentPages(page, gridOfSegment(SEGMENTS[1]!), 3, 5);
     await expect(ui(page).status).toHaveText('');
     for (const name of CONTROLS) await expect(ui(page)[name], name).toBeEnabled();
-    await expect(page.locator('canvas')).toHaveCount(1);
+    // 出力画像の canvas(#canvas)は常に 1 枚。元PDFプレビュー(F11)のサムネイルは、別の canvas を持つ
+    await expect(page.locator('#canvas')).toHaveCount(1);
   });
 
   test('保存中は、「キャンセル」以外の操作が無効になり、進捗は「保存中 K/N 個(範囲)」だけを出す(ページごとの「描画中」は出さない)。ドロップは無視される', async ({ page, shot }) => {
@@ -305,7 +307,8 @@ test.describe('すべてダウンロード(一括保存。blueprint の F10、�
     await expect(ui(page).downloadAll).toHaveText('キャンセル');
     await expect(ui(page).downloadAll).toBeEnabled();
     for (const name of CONTROLS) await expect(ui(page)[name], name).toBeDisabled();
-    await expect(page.locator('canvas'), 'プレビューと同じ 1 枚の canvas').toHaveCount(1);
+    // 出力画像の canvas(#canvas)は常に 1 枚。元PDFプレビュー(F11)のサムネイルは、別の canvas を持つ
+    await expect(page.locator('#canvas'), 'プレビューと同じ 1 枚の canvas').toHaveCount(1);
     await shot('一括保存中(1 個目の保存を待たせている)');
     expect(await dropFiles(page, ['single-page.pdf']), 'ブラウザの既定の動作(ファイルを開く)は止められる').toBe(true);
     await expect(ui(page).status, '別の PDF に置き換わらず、エラーも出ない').toHaveText('保存中 1/3 個(p.1–3)');

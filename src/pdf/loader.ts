@@ -4,12 +4,15 @@ import { configurePdfjs, documentOptions } from './config.ts';
 import { toOpenFailure } from './errors.ts';
 import { readPageSizes } from './page-sizes.ts';
 import { createPageSource, type RenderSurface } from './source.ts';
+import { renderThumbnailPage } from './thumbnail-render.ts';
 
 /** 開いた文書から、描画元(ページの大きさと、読めたかどうかは、ここで全ページ分を読む)と、閉じる処理を作る。 */
 async function wrap(doc: PDFDocumentProxy, surface: RenderSurface): Promise<OpenedPdf> {
   const source = createPageSource(doc, await readPageSizes(doc), surface);
   return {
     source,
+    /** 元PDFプレビュー(F11)のサムネイル描画は、最終の出力画像とは別に、直接 canvas へ描く。 */
+    renderThumbnail: (index, targetWidth, canvas, signal) => renderThumbnailPage(doc, index + 1, targetWidth, canvas, signal),
     /** 作業用の canvas を手放し、pdf.js の文書と Worker を破棄する。 */
     close: () => {
       source.release();

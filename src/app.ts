@@ -7,6 +7,7 @@ import { createSeparatorsInput, type SeparatorsInput } from './core/separators-i
 import { formatSeparators } from './core/separators.ts';
 import { INITIAL_STATE, reduce, segmentsOfState, shownImageName, statusLines, uiFlags, type AppEvent, type AppState } from './core/state.ts';
 import { createStore, type Store } from './core/store.ts';
+import { THUMBNAIL_WIDTH } from './core/thumbnail-layout.ts';
 import { ZoomController } from './core/zoom-controller.ts';
 import { wheelZoomFactor, zoomAnchoredScroll, type Point } from './core/zoom.ts';
 import { openPdf } from './pdf/loader.ts';
@@ -15,6 +16,7 @@ import { bindDropzone, blockStrayDrops } from './view/dropzone.ts';
 import { canvasToPng, saveBlob } from './view/download.ts';
 import { createPreview, type Preview } from './view/preview.ts';
 import { renderStatus } from './view/status.ts';
+import { createThumbnailSidebar, type ThumbnailSidebar } from './view/thumbnail-sidebar.ts';
 import { bindToolbar, type SegmentOption, type Toolbar, type ToolbarHandlers, type ToolbarModel } from './view/toolbar.ts';
 import { watchDevicePixelRatio } from './view/viewport.ts';
 
@@ -29,6 +31,7 @@ class App implements ToolbarHandlers {
   private readonly store: Store<AppState, AppEvent> = createStore(INITIAL_STATE, reduce);
   private readonly zoom = new ZoomController();
   private readonly preview: Preview;
+  private readonly thumbnails: ThumbnailSidebar;
   private readonly toolbar: Toolbar;
   private readonly statusLine: HTMLElement;
   private readonly controller: Controller<File>;
@@ -38,6 +41,7 @@ class App implements ToolbarHandlers {
   /** index.html の要素に、各部品を結びつけ、状態の変化を画面に反映するようにする。 */
   constructor(root: HTMLElement) {
     this.preview = createPreview(root);
+    this.thumbnails = createThumbnailSidebar(root);
     this.statusLine = requireElement(root, '#status');
     this.controller = this.buildController();
     this.columns = this.buildColumnsInput();
@@ -65,9 +69,13 @@ class App implements ToolbarHandlers {
     return createColumnsInput({ state, apply: this.applyColumns.bind(this), write: this.writeColumns.bind(this) });
   }
 
-  /** PDF ファイルを開く。ページは、プレビューの出力画像へ描かれる。 */
-  private openFile(file: File): ReturnType<typeof openPdf> {
-    return openPdf(file, this.preview);
+  /** PDF ファイルを開く。ページは、プレビューの出力画像へ描かれる。元PDFプレビュー(F11)にも文書を渡す。 */
+  private async openFile(file: File): ReturnType<typeof openPdf> {
+    const pdf = await openPdf(file, this.preview);
+    /** 元PDFプレビュー(F11)用に、固定幅のサムネイルとして 1 ページ描く。 */
+    const render = (index: number, canvas: HTMLCanvasElement, signal: AbortSignal): Promise<void> => pdf.renderThumbnail(index, THUMBNAIL_WIDTH, canvas, signal);
+    this.thumbnails.setDocument(pdf.source.pageCount, (index) => pdf.source.pageSize(index), render);
+    return pdf;
   }
 
   /** 列数の変更を反映する(描き直す)。 */
@@ -101,9 +109,13 @@ class App implements ToolbarHandlers {
     this.render(this.store.getState());
   }
 
-  /** 状態を、プレビュー、倍率、ステータス行、ツールバーに反映する。 */
+  /** 状態を、プレビュー、元PDFプレビュー、倍率、ステータス行、ツールバーに反映する。 */
   private render(state: AppState): void {
-    this.preview.showImage(state.phase === 'rendering' || state.phase === 'ready');
+    const active = state.phase === 'rendering' || state.phase === 'ready';
+    this.preview.showImage(active);
+    if (state.phase === 'loading') this.thumbnails.clear();
+    this.thumbnails.setVisible(active);
+    this.thumbnails.setActive(state.phase === 'ready');
     this.refreshZoom();
     renderStatus(this.statusLine, statusLines(state));
   }

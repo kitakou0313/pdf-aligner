@@ -14,6 +14,8 @@ export interface PdfFile {
 /** 開いた PDF。source からページを描き、不要になったら close で資源を解放する。 */
 export interface OpenedPdf {
   readonly source: PageSource;
+  /** 元PDFプレビュー(F11)用: n ページ目(0 始まり)を、指定した幅のサムネイルとして canvas に描く。 */
+  renderThumbnail(index: number, targetWidth: number, canvas: HTMLCanvasElement, signal: AbortSignal): Promise<void>;
   close(): void;
 }
 

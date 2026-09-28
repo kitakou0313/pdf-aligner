@@ -44,6 +44,11 @@ class FakePdf implements OpenedPdf {
     this.closed += 1;
     this.logTo?.log.push(`close ${this.logTo.label}`);
   }
+
+  /** この偽物では使わない(元PDFプレビューは、コントローラの対象外)。 */
+  renderThumbnail(): Promise<void> {
+    return Promise.resolve();
+  }
 }
 
 /** prepare の追加動作: 「prepare <ページ数>」をログに残す。 */

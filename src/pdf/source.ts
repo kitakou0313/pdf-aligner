@@ -27,7 +27,7 @@ function fitCanvas(canvas: HTMLCanvasElement, placement: Placement): void {
 }
 
 /** pdf.js の描画が終わるまで待つ。その間に中断されたら、描画を取り消す(待ちは、取り消しの例外で終わる)。 */
-async function untilDone(task: RenderTask, signal: AbortSignal): Promise<void> {
+export async function untilDone(task: RenderTask, signal: AbortSignal): Promise<void> {
   /** 中断されたら、pdf.js の描画を取り消す。 */
   const cancel = (): void => task.cancel();
   signal.addEventListener('abort', cancel, { once: true });

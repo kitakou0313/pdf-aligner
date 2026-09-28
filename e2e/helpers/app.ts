@@ -19,6 +19,7 @@ const SELECTORS = {
   zoomFit: '#zoom-fit',
   download: '#download',
   downloadAll: '#download-all',
+  thumbnails: '#thumbnails',
   preview: '#preview',
   stage: '#stage',
   canvas: '#canvas',

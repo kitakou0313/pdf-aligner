@@ -71,7 +71,8 @@ test('ダウンロードした PNG は、プレビューの canvas と全ての�
   expect({ width: png.width, height: png.height, sha256: pngHash(png) }).toEqual(await canvasHash(page));
   expect(png.opaque, 'PNG は不透明').toBe(true);
   expect(fileName).toBe('mixed-sizes-3cols.png');
-  await expect(page.locator('canvas')).toHaveCount(1);
+  // 出力画像の canvas(#canvas)は常に 1 枚。元PDFプレビュー(F11)のサムネイルは、別の canvas を持つ
+  await expect(page.locator('#canvas')).toHaveCount(1);
 });
 
 test('ダウンロードした PNG では、各ページの色と位置が期待どおりで、全体が不透明', async ({ page }) => {

@@ -28,12 +28,15 @@
         <button type="button" id="download-all" title="Chrome が複数ファイルのダウンロードの確認を出したら、「許可」を選んでください" disabled>すべてダウンロード</button>
       </header>
       <div id="status" class="status" role="status" aria-live="polite"></div>
-      <main id="preview" class="preview" tabindex="0">
-        <p id="placeholder" class="placeholder">PDFをここにドロップ</p>
-        <div id="stage" class="stage" hidden>
-          <canvas id="canvas"></canvas>
-        </div>
-      </main>
+      <div class="workspace">
+        <aside id="thumbnails" class="thumbnails" aria-label="元PDFのページ一覧" hidden></aside>
+        <main id="preview" class="preview" tabindex="0">
+          <p id="placeholder" class="placeholder">PDFをここにドロップ</p>
+          <div id="stage" class="stage" hidden>
+            <canvas id="canvas"></canvas>
+          </div>
+        </main>
+      </div>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
