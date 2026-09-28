@@ -131,6 +131,29 @@ test.describe('描画中の応答性(メインスレッドを長く止めない)
     expect(gap, `タイマーの最大の遅れ(ms)`).toBeLessThan(1000);
   });
 
+  test('元PDFプレビューをスクロールしながら描画しても、メインスレッドが1秒以上止まることはない(F7: 元PDFプレビュー優先)', async ({ page }) => {
+    await page.goto('/');
+    await page.evaluate(() => {
+      const w = window as unknown as { __maxGap: number };
+      w.__maxGap = 0;
+      let last = performance.now();
+      setInterval(() => {
+        const now = performance.now();
+        w.__maxGap = Math.max(w.__maxGap, now - last);
+        last = now;
+      }, 10);
+    });
+    await chooseFile(page, 'many-pages-150.pdf');
+    await ui(page).thumbnails.waitFor({ state: 'visible' });
+    for (let step = 1; step <= 6; step += 1) {
+      await page.waitForTimeout(300);
+      await ui(page).thumbnails.evaluate((el, top) => void (el.scrollTop = top), step * 400);
+    }
+    await expectRendered(page);
+    const gap = await page.evaluate(() => (window as unknown as { __maxGap: number }).__maxGap);
+    expect(gap, `タイマーの最大の遅れ(ms)`).toBeLessThan(1000);
+  });
+
   test('描画中でも、ズームの操作は(数秒以内に)反映される', async ({ page }) => {
     await page.goto('/');
     await throttleCpu(page, 4);

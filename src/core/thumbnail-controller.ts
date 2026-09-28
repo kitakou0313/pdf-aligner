@@ -16,17 +16,38 @@ export class ThumbnailController {
   private state: readonly ThumbnailStatus[] = [];
   private readonly aborts = new Map<number, AbortController>();
   private readonly deps: ThumbnailControllerDeps;
+  private readonly settledListeners = new Set<(settled: boolean) => void>();
 
   /** 描画の関数と、変化の通知先から作る。 */
   constructor(deps: ThumbnailControllerDeps) {
     this.deps = deps;
   }
 
+  /** 見えている範囲に、生成中(rendering)のページが 1 つもないか(F7 の元PDFプレビュー優先が使う)。 */
+  isSettled(): boolean {
+    return !this.state.includes('rendering');
+  }
+
+  /** isSettled() の値が変わるたびに呼ぶ。返り値を呼ぶと購読を解除する。 */
+  onSettledChange(listener: (settled: boolean) => void): () => void {
+    this.settledListeners.add(listener);
+    return () => void this.settledListeners.delete(listener);
+  }
+
+  /** settled が、呼び出し前(before)から変わっていたら、購読者に知らせる。 */
+  private notifySettled(before: boolean): void {
+    const after = this.isSettled();
+    if (after === before) return;
+    for (const listener of [...this.settledListeners]) listener(after);
+  }
+
   /** 新しい文書に差し替える。進行中の render はすべて中断し、指定したページ数の pending に戻す。 */
   reset(pageCount: number): void {
+    const before = this.isSettled();
     for (const controller of this.aborts.values()) controller.abort();
     this.aborts.clear();
     this.state = initialThumbnailState(pageCount);
+    this.notifySettled(before);
   }
 
   /** index 番目のページが見えるようになった。pending だったときだけ、描画を始める。 */
@@ -64,11 +85,13 @@ export class ThumbnailController {
     this.apply(index, event);
   }
 
-  /** イベントを状態に適用し、実際に変わったときだけ通知する。 */
+  /** イベントを状態に適用し、実際に変わったときだけ通知する(1 ページ分と、settled の集約と、両方)。 */
   private apply(index: number, event: { type: 'visible' | 'invisible' | 'succeeded' | 'failed' }): void {
     const before = this.state[index];
+    const settledBefore = this.isSettled();
     this.state = reduceThumbnail(this.state, index, event);
     const after = this.state[index] as ThumbnailStatus;
     if (after !== before) this.deps.onChange(index, after);
+    this.notifySettled(settledBefore);
   }
 }

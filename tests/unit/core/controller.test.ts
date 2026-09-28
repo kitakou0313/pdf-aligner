@@ -4,6 +4,7 @@ import { computeLayout, type Layout } from '../../../src/core/layout.ts';
 import { INITIAL_STATE, reduce, type AppEvent, type AppState } from '../../../src/core/state.ts';
 import { createStore, type Store } from '../../../src/core/store.ts';
 import { FakeSource, type Behavior } from './helpers/fake-source.ts';
+import { FakeThumbnails } from './helpers/fake-thumbnails.ts';
 import { A4, repeat } from './helpers/pages.ts';
 
 /** 外から解決・拒否できる Promise(処理の順序を、テストが決めるため)。 */
@@ -120,11 +121,13 @@ interface Kit {
   readonly requests: SaveRequest[];
 }
 
-/** setup の追加動作(出力先の準備の後に行うこと、保存の結果)。 */
+/** setup の追加動作(出力先の準備の後に行うこと、保存の結果、元PDFプレビューの偽物)。 */
 interface SetupExtra {
   readonly prepare?: (layout: Layout) => void;
   /** 保存の結果(既定は、常に成功)。 */
   readonly saveImage?: (name: string) => Promise<boolean>;
+  /** 元PDFプレビュー優先の偽物(既定は、渡さない。渡さなければ常に settled と同じに振る舞う)。 */
+  readonly thumbnails?: FakeThumbnails;
 }
 
 /** 状態の phase の変化を、順に記録する配列を作る(最初の phase を含む)。 */
@@ -164,7 +167,7 @@ function setup(open: (file: PdfFile) => Promise<OpenedPdf>, extra: SetupExtra = 
     extra.prepare?.(layout);
   };
   const saveImage = recordingSaver(store, requests, extra.saveImage);
-  return { store, controller: createController({ store, open, prepare, saveImage }), prepared, phases, requests };
+  return { store, controller: createController({ store, open, prepare, saveImage, thumbnails: extra.thumbnails }), prepared, phases, requests };
 }
 
 /** 常に同じ PDF を返す open。 */
@@ -749,5 +752,54 @@ describe('一括保存(downloadAll / cancelBatch)', () => {
     const before = kit.store.getState();
     kit.controller.cancelBatch();
     expect(kit.store.getState()).toBe(before);
+  });
+});
+
+describe('元PDFプレビューの優先(F7/F11。一括保存中を除く)', () => {
+  it('サムネイルが未確定の間は、出力の描画を始めない(deferredForThumbnails)。落ち着くと、その時点の状態で描き始める', async () => {
+    const thumbnails = new FakeThumbnails(false);
+    const pdf = new FakePdf(3);
+    const { store, controller } = setup(alwaysOpens(pdf), { thumbnails });
+    const done = controller.chooseFile(file('a.pdf'));
+    await vi.waitFor(() => expect(store.getState().deferredForThumbnails).toBe(true));
+    expect(store.getState().phase).toBe('rendering');
+    expect(pdf.source.calls, '優先されている間は、まだ描かない').toEqual([]);
+    thumbnails.setSettled(true);
+    await done;
+    expect(store.getState()).toMatchObject({ phase: 'ready', deferredForThumbnails: false });
+    expect(pdf.source.calls).toEqual([0, 1, 2]);
+  });
+
+  it('描画の途中でサムネイルが未確定になったら中断し、落ち着いてから最初から描き直す(中断した描画の続きは描かれない)', async () => {
+    const thumbnails = new FakeThumbnails(true);
+    const pdf = new FakePdf(6, hangAt(2));
+    const kit = setup(alwaysOpens(pdf), { thumbnails });
+    const first = kit.controller.chooseFile(file('a.pdf'));
+    await vi.waitFor(() => expect(pdf.source.calls).toEqual([0, 1, 2]));
+    pdf.source.calls.length = 0;
+    thumbnails.setSettled(false);
+    await vi.waitFor(() => expect(kit.store.getState().deferredForThumbnails).toBe(true));
+    thumbnails.setSettled(true);
+    await first;
+    expect(pdf.source.calls).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', deferredForThumbnails: false });
+  });
+
+  it('元PDFプレビューを渡さないとき(既定)は、常に settled と同じに振る舞い、優先されない', async () => {
+    const pdf = new FakePdf(3);
+    const { store, controller } = setup(alwaysOpens(pdf));
+    await controller.chooseFile(file('a.pdf'));
+    expect(store.getState()).toMatchObject({ phase: 'ready', deferredForThumbnails: false });
+  });
+
+  it('一括保存中は、サムネイルが未確定でも中断せず、常に出力を優先する', async () => {
+    const thumbnails = new FakeThumbnails(true);
+    const kit = setup(alwaysOpens(new FakePdf(20)), { thumbnails });
+    await kit.controller.chooseFile(file('report.pdf'));
+    await kit.controller.setSeparators([5, 8]);
+    thumbnails.setSettled(false);
+    await kit.controller.downloadAll();
+    expect(kit.requests).toHaveLength(3);
+    expect(kit.store.getState()).toMatchObject({ phase: 'ready', batch: null, deferredForThumbnails: false });
   });
 });

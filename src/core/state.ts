@@ -3,6 +3,7 @@ import { imageFileName } from './filename.ts';
 import {
   ERROR_TEXT,
   LOADING_TEXT,
+  THUMBNAIL_PRIORITY_TEXT,
   formatBatchCancelled,
   formatBatchFailed,
   formatBatchProgress,
@@ -63,6 +64,8 @@ export interface AppState {
   readonly batch: BatchProgress | null;
   /** 直前の一括保存を、キャンセルまたは失敗で止めた記録。 */
   readonly batchStop: BatchStop | null;
+  /** 元PDFプレビューの都合で、出力の描画を始めていない、または中断しているか(F7/F11。一括保存中はならない)。 */
+  readonly deferredForThumbnails: boolean;
 }
 
 /** 状態を変えるイベント。 */
@@ -82,7 +85,9 @@ export type AppEvent =
   | { readonly type: 'batchStarted' }
   | { readonly type: 'batchProgressed'; readonly index: number; readonly saved: number }
   | { readonly type: 'batchFinished' }
-  | { readonly type: 'batchStopped'; readonly reason: 'cancelled' | 'failed'; readonly index: number; readonly saved: number };
+  | { readonly type: 'batchStopped'; readonly reason: 'cancelled' | 'failed'; readonly index: number; readonly saved: number }
+  | { readonly type: 'renderDeferred' }
+  | { readonly type: 'renderResumed' };
 
 /** 各操作の可否(blueprint の「画面の状態と操作の可否」)。 */
 export interface UiFlags {
@@ -116,6 +121,7 @@ export const INITIAL_STATE: AppState = {
   error: null,
   batch: null,
   batchStop: null,
+  deferredForThumbnails: false,
 };
 
 type EventOf<T extends AppEvent['type']> = Extract<AppEvent, { type: T }>;
@@ -155,7 +161,7 @@ function isActive(state: AppState): boolean {
 /** 表示する画像を描き直す状態にする(描画中に戻し、進捗を 0 から数え直し、縮小・警告・エラーを消す)。 */
 function restart(state: AppState): AppState {
   const progress = { done: 0, total: shownPageCount(state) };
-  return { ...state, phase: 'rendering', progress, shrink: null, failedPages: [], error: null, batchStop: null };
+  return { ...state, phase: 'rendering', progress, shrink: null, failedPages: [], error: null, batchStop: null, deferredForThumbnails: false };
 }
 
 /** PDF を選ぶと、どの状態からでも、全ての状態を置き換えて loading になる。 */
@@ -265,6 +271,16 @@ function onBatchStopped(state: AppState, event: EventOf<'batchStopped'>): AppSta
   return { ...state, batch: null, batchStop };
 }
 
+/** 元PDFプレビューの都合で、出力の描画を始めない/中断する(F7/F11)。rendering 中でなければ無視する。 */
+function onRenderDeferred(state: AppState): AppState {
+  return state.phase === 'rendering' && !state.deferredForThumbnails ? { ...state, deferredForThumbnails: true } : state;
+}
+
+/** 元PDFプレビューが落ち着いて、出力の描画を(また)始める。 */
+function onRenderResumed(state: AppState): AppState {
+  return state.deferredForThumbnails ? { ...state, deferredForThumbnails: false } : state;
+}
+
 const HANDLERS: Handlers = {
   fileChosen: onFileChosen,
   loadFailed: onLoadFailed,
@@ -282,6 +298,8 @@ const HANDLERS: Handlers = {
   batchProgressed: onBatchProgressed,
   batchFinished: onBatchFinished,
   batchStopped: onBatchStopped,
+  renderDeferred: onRenderDeferred,
+  renderResumed: onRenderResumed,
 };
 
 /** 状態にイベントを適用した、新しい状態を返す(状態は書き換えない。状況に合わない古いイベントは無視する)。 */
@@ -329,6 +347,7 @@ function progressLines(state: AppState): StatusLine[] {
   if (state.batch) return [{ kind: 'progress', text: batchProgressText(state, state.batch) }];
   if (state.phase === 'loading') return [{ kind: 'progress', text: LOADING_TEXT }];
   if (state.phase !== 'rendering') return [];
+  if (state.deferredForThumbnails) return [{ kind: 'progress', text: THUMBNAIL_PRIORITY_TEXT }];
   return [{ kind: 'progress', text: formatProgress(state.progress.done, state.progress.total) }];
 }
 

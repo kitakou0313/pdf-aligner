@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { chooseFile, dropFiles, expectRendered, openAndWait, throttleCpu, ui } from './helpers/app.ts';
 import { test, expect } from './helpers/fixtures.ts';
-import { waitForProgress } from './helpers/render-watch.ts';
+import { watchStatus } from './helpers/render-watch.ts';
 import { commitSeparators, holdToBlobAt, releaseToBlob, selectSegment } from './helpers/split.ts';
 
 /** 今、生成済み(rendered)のサムネイルの数。 */
@@ -92,16 +92,15 @@ test.describe('元PDFプレビュー(F11: 区切りページ判断の補助の�
     });
   });
 
-  test('出力画像の描画中は、新しくサムネイルの生成を始めない。描画が終わってから始める(Q10: 出力画像の描画を優先)', async ({ page }) => {
+  test('元PDFプレビューが未確定の間は、出力の描画より優先し、専用の文言を出す。落ち着くと出力を描き始める(F7: 元PDFプレビュー優先)', async ({ page }) => {
     await page.goto('/');
     await throttleCpu(page, 4);
     await chooseFile(page, 'many-pages-150.pdf');
-    await waitForProgress(page, 5);
     await expect(thumbs(page)).toHaveCount(150);
-    expect(await renderedCount(page), '出力画像の描画中は、サムネイルを生成しない').toBe(0);
+    await expect(ui(page).status, '出力の描画より、元PDFプレビューを優先している').toHaveText('元PDFプレビューの表示を優先しています');
     await throttleCpu(page, 1);
     await expectRendered(page);
-    await expect.poll(() => renderedCount(page)).toBeGreaterThan(0);
+    await expect.poll(() => renderedCount(page), '落ち着いた後は、サムネイルも生成されている').toBeGreaterThan(0);
   });
 
   test('大きい PDF では、見えている範囲付近のページだけを生成し、スクロールすると増える(Q7: 遅延読み込み・仮想化)', async ({ page }) => {
@@ -128,6 +127,23 @@ test.describe('元PDFプレビュー(F11: 区切りページ判断の補助の�
     await expect(thumbs(page)).toHaveCount(12);
     await releaseToBlob(page);
     await expect(ui(page).downloadAll).toHaveText('すべてダウンロード');
+  });
+
+  test('一括保存中は、元PDFプレビューをスクロールしても、出力の描画は中断されない(F7: 一括保存中を除く)', async ({ page }) => {
+    await page.goto('/');
+    await openAndWait(page, 'many-pages-150.pdf');
+    await commitSeparators(page, '40, 90');
+    await throttleCpu(page, 4);
+    const statusLog = await watchStatus(page);
+    await ui(page).downloadAll.click();
+    await expect(ui(page).downloadAll).toHaveText('キャンセル');
+    await ui(page).thumbnails.evaluate((el) => {
+      el.scrollTop = el.scrollHeight;
+    });
+    await expect(ui(page).downloadAll).toHaveText('すべてダウンロード', { timeout: 240_000 });
+    await throttleCpu(page, 1);
+    const log = (await statusLog.jsonValue()) as string[];
+    expect(log, '一括保存中は、元PDFプレビュー優先の文言を一度も出さない').not.toContain('元PDFプレビューの表示を優先しています');
   });
 
   test('別の PDF に差し替えると、元PDFプレビューも新しい内容に置き換わる', async ({ page }) => {

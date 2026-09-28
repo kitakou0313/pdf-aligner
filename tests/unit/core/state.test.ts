@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ERROR_TEXT } from '../../../src/core/messages.ts';
+import { ERROR_TEXT, THUMBNAIL_PRIORITY_TEXT } from '../../../src/core/messages.ts';
 import { INITIAL_STATE, reduce, shownImageName, shownIndex, statusLines, uiFlags, type AppEvent, type AppState } from '../../../src/core/state.ts';
 
 /** オブジェクトを再帰的に凍結する(reduce が入力を書き換えたら、例外で気づけるようにする)。 */
@@ -52,6 +52,7 @@ describe('初期状態', () => {
     expect(INITIAL_STATE).toMatchObject({ phase: 'idle', fileName: null, pageCount: 0, error: null });
     expect(INITIAL_STATE.failedPages).toEqual([]);
     expect(INITIAL_STATE.shrink).toBeNull();
+    expect(INITIAL_STATE.deferredForThumbnails).toBe(false);
   });
 });
 
@@ -112,6 +113,36 @@ describe('描画の進行(layoutPlanned / progress / renderFinished)', () => {
     const state = run([{ type: 'renderFinished', failedPages: [6, 11] }], RENDERING);
     expect(state).toMatchObject({ phase: 'ready', failedPages: [6, 11] });
     expect(state.progress).toEqual({ done: 12, total: 12 });
+  });
+});
+
+describe('元PDFプレビューの優先による中断・再開(renderDeferred / renderResumed。F7/F11)', () => {
+  it('rendering 中に renderDeferred が来ると、phase はそのままで、deferredForThumbnails だけが true になる', () => {
+    const state = run([{ type: 'renderDeferred' }], RENDERING);
+    expect(state).toMatchObject({ phase: 'rendering', deferredForThumbnails: true });
+  });
+
+  it('renderResumed が来ると、deferredForThumbnails が false に戻る(phase はそのまま)', () => {
+    const deferred = run([{ type: 'renderDeferred' }], RENDERING);
+    const resumed = run([{ type: 'renderResumed' }], deferred);
+    expect(resumed).toMatchObject({ phase: 'rendering', deferredForThumbnails: false });
+  });
+
+  it('すでに同じ値なら、状態を変えない(冪等)', () => {
+    expect(reduce(RENDERING, { type: 'renderResumed' })).toBe(RENDERING);
+    const deferred = run([{ type: 'renderDeferred' }], RENDERING);
+    expect(reduce(deferred, { type: 'renderDeferred' })).toBe(deferred);
+  });
+
+  it.each([INITIAL_STATE, LOADING, READY])('rendering 以外(%#)では、renderDeferred を無視する', (from) => {
+    expect(reduce(from, { type: 'renderDeferred' })).toBe(from);
+  });
+
+  it('列数・区切り・セグメント選択で描き直すと、deferredForThumbnails は false に戻る', () => {
+    const deferred = run([{ type: 'renderDeferred' }], RENDERING);
+    expect(run([{ type: 'columnsChanged', columns: 3 }], deferred).deferredForThumbnails).toBe(false);
+    const deferred20 = run([{ type: 'renderDeferred' }], RENDERING_20);
+    expect(run([{ type: 'separatorsChanged', separators: [5] }], deferred20).deferredForThumbnails).toBe(false);
   });
 });
 
@@ -417,6 +448,23 @@ describe('statusLines(ステータス行に出すメッセージ。順序は 進
 
   it('警告は、ダウンロード後も(ready の間)出し続ける', () => {
     expect(statusLines(run([{ type: 'renderFinished', failedPages: [0] }], RENDERING))).toHaveLength(1);
+  });
+
+  it('元PDFプレビュー優先で中断・待機している間は、「描画中」の代わりに専用の文言を出す', () => {
+    const state = run([{ type: 'progress', done: 3, total: 12 }, { type: 'renderDeferred' }], RENDERING);
+    expect(statusLines(state)).toEqual([{ kind: 'progress', text: THUMBNAIL_PRIORITY_TEXT }]);
+  });
+
+  it('再開すると、専用の文言から「描画中」に戻る', () => {
+    const state = run([{ type: 'renderDeferred' }, { type: 'renderResumed' }, { type: 'progress', done: 1, total: 12 }], RENDERING);
+    expect(statusLines(state)).toEqual([{ kind: 'progress', text: '描画中 1/12 ページ' }]);
+  });
+
+  it('一括保存中に(セグメントの描画が) rendering であっても、deferredForThumbnails ではなく保存中の進捗を出す', () => {
+    const rendering = run([{ type: 'segmentSelected', start: 5 }], BATCHING);
+    const state = run([{ type: 'renderDeferred' }], rendering);
+    expect(state.deferredForThumbnails, '一括保存中でも、フラグ自体は立ちうる').toBe(true);
+    expect(statusLines(state)[0]).toEqual({ kind: 'progress', text: '保存中 1/3 個(p.1–4)' });
   });
 
   it('区切りで分けているとき、描画中の総数は、表示中のセグメントのページ数(p.8–20 なら 13)', () => {

@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import {
   ERROR_TEXT,
   LOADING_TEXT,
+  THUMBNAIL_PRIORITY_TEXT,
   formatBatchCancelled,
   formatBatchFailed,
   formatBatchProgress,
@@ -18,7 +19,7 @@ describe('メッセージの文言(blueprint の F8 と一致する)', () => {
   });
 
   it('固定の文言は、blueprint の一覧に、そのまま載っている(仕様と実装のずれを防ぐ)', () => {
-    for (const text of [LOADING_TEXT, ...Object.values(ERROR_TEXT)]) {
+    for (const text of [LOADING_TEXT, THUMBNAIL_PRIORITY_TEXT, ...Object.values(ERROR_TEXT)]) {
       expect(blueprint, text).toContain(text);
     }
   });
@@ -32,6 +33,7 @@ describe('メッセージの文言(blueprint の F8 と一致する)', () => {
       pngFailed: '画像が大きすぎて PNG を生成できませんでした。列数を変更するか、PDF を分割してお試しください。',
     });
     expect(LOADING_TEXT).toBe('読み込み中…');
+    expect(THUMBNAIL_PRIORITY_TEXT).toBe('元PDFプレビューの表示を優先しています');
   });
 
   it('一括保存の文言は、blueprint の例 9 の表に、そのまま載っている', () => {

@@ -12,6 +12,9 @@ export const ERROR_TEXT: Readonly<Record<AppError, string>> = {
 
 export const LOADING_TEXT = '読み込み中…';
 
+// F7/F11: 元PDFプレビューの表示を優先していて、出力の描画を始めていない/中断しているときの進捗文言
+export const THUMBNAIL_PRIORITY_TEXT = '元PDFプレビューの表示を優先しています';
+
 /** 描画の進捗(描画中 N/M ページ)の文言を作る。 */
 export function formatProgress(done: number, total: number): string {
   return `描画中 ${done}/${total} ページ`;

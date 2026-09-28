@@ -50,11 +50,11 @@ class App implements ToolbarHandlers {
     this.connect(requireElement(root, '#preview'));
   }
 
-  /** 読み込みと描画を調停するコントローラを、状態の入れ物・PDF を開く処理・出力先の準備・画像の保存につないで作る。 */
+  /** 読み込みと描画を調停するコントローラを、状態の入れ物・PDF を開く処理・出力先の準備・画像の保存・元PDFプレビューにつないで作る。 */
   private buildController(): Controller<File> {
     const open = this.openFile.bind(this);
     const [prepare, saveImage] = [this.onPrepare.bind(this), this.saveImage.bind(this)];
-    return createController<File>({ store: this.store, open, prepare, saveImage });
+    return createController<File>({ store: this.store, open, prepare, saveImage, thumbnails: this.thumbnails });
   }
 
   /** 区切りの入力欄の規則を、状態・区切りの反映・欄への書き戻しにつないで作る。 */
@@ -115,7 +115,6 @@ class App implements ToolbarHandlers {
     this.preview.showImage(active);
     if (state.phase === 'loading') this.thumbnails.clear();
     this.thumbnails.setVisible(active);
-    this.thumbnails.setActive(state.phase === 'ready');
     this.refreshZoom();
     renderStatus(this.statusLine, statusLines(state));
   }

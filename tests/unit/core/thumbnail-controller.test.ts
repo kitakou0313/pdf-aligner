@@ -139,3 +139,93 @@ describe('ThumbnailController(可視化イベントから、render の呼び出�
     expect(controller.statusOf(1)).toBe('pending');
   });
 });
+
+describe('ThumbnailController(isSettled / onSettledChange。F7 の元PDFプレビュー優先が使う)', () => {
+  it('生成中(rendering)のページが 1 つもなければ settled', () => {
+    const { render } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(2);
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('可視化して生成が始まると settled でなくなり、購読者に false を通知する', () => {
+    const { render } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(2);
+    const listener = vi.fn();
+    controller.onSettledChange(listener);
+    controller.visible(0);
+    expect(controller.isSettled()).toBe(false);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(false);
+  });
+
+  it('生成が成功すると、また settled になり、true を通知する', async () => {
+    const { render, settle } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(1);
+    const listener = vi.fn();
+    controller.onSettledChange(listener);
+    controller.visible(0);
+    listener.mockClear();
+    settle.get(0)?.resolve();
+    await flush();
+    expect(controller.isSettled()).toBe(true);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('生成が失敗しても settled になる(失敗は確定した状態として扱う)', async () => {
+    const { render, settle } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(1);
+    controller.visible(0);
+    settle.get(0)?.reject(new Error('boom'));
+    await flush();
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('不可視化すると、進行中でも settled に戻る(Q7: 中断して pending に戻すため)', () => {
+    const { render } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(1);
+    controller.visible(0);
+    controller.invisible(0);
+    expect(controller.isSettled()).toBe(true);
+  });
+
+  it('複数ページのうち 1 つでも生成中なら settled でない(全て確定して初めて settled になる)', () => {
+    const { render, settle } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(2);
+    const listener = vi.fn();
+    controller.onSettledChange(listener);
+    controller.visible(0);
+    controller.visible(1);
+    listener.mockClear();
+    settle.get(0)?.resolve();
+    expect(controller.isSettled(), 'まだ 1 ページ生成中').toBe(false);
+    expect(listener, '集約した値が変わっていないので、通知しない').not.toHaveBeenCalled();
+  });
+
+  it('reset は、進行中の生成を中断するので、settled に戻る', () => {
+    const { render } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(2);
+    controller.visible(0);
+    const listener = vi.fn();
+    controller.onSettledChange(listener);
+    controller.reset(3);
+    expect(controller.isSettled()).toBe(true);
+    expect(listener).toHaveBeenCalledExactlyOnceWith(true);
+  });
+
+  it('購読を解除すると、以後は呼ばれない', () => {
+    const { render } = fakeRender();
+    const controller = new ThumbnailController({ render, onChange: vi.fn() });
+    controller.reset(1);
+    const listener = vi.fn();
+    const unsubscribe = controller.onSettledChange(listener);
+    unsubscribe();
+    controller.visible(0);
+    expect(listener).not.toHaveBeenCalled();
+  });
+});
