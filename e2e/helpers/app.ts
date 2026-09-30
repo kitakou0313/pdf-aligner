@@ -19,6 +19,8 @@ const SELECTORS = {
   zoomFit: '#zoom-fit',
   download: '#download',
   downloadAll: '#download-all',
+  downloadPdf: '#download-pdf',
+  downloadAllPdf: '#download-all-pdf',
   thumbnails: '#thumbnails',
   preview: '#preview',
   stage: '#stage',
