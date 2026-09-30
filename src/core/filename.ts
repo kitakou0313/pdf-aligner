@@ -35,6 +35,15 @@ export function segmentFileName(originalName: string, segment: Segment, pageCoun
 }
 
 /**
+ * セグメントの PDF のファイル名(<元の名前>-p<開始>-<終了>.pdf)を作る。PNG のセグメントの名前から列数を除いた形で、
+ * 区切りなし(セグメントが 1 個)のときも、ページ範囲を入れる(区切りの有無で名前の規則を変えない)。
+ */
+export function pdfFileName(originalName: string, segment: Segment, pageCount: number): string {
+  const range = `p${padPage(segment.start, pageCount)}-${padPage(segment.end, pageCount)}`;
+  return `${baseNameOf(originalName)}-${range}.pdf`;
+}
+
+/**
  * index 番目のセグメントの画像を保存するときのファイル名。セグメントが 1 個(区切りなし)のときは、
  * 従来の名前(downloadFileName)のまま。2 個以上のときは、ページ範囲と、そのセグメントの実際の列数を入れる。
  */

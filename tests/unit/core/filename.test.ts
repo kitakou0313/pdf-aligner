@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { downloadFileName, FALLBACK_BASE_NAME, imageFileName, segmentFileName } from '../../../src/core/filename.ts';
+import { downloadFileName, FALLBACK_BASE_NAME, imageFileName, pdfFileName, segmentFileName } from '../../../src/core/filename.ts';
 import { segmentsOf } from '../../../src/core/segments.ts';
 
 describe('downloadFileName(<元のファイル名(拡張子なし)>-<列数>cols.png)', () => {
@@ -92,6 +92,31 @@ describe('imageFileName(表示中のセグメント、または一括保存の n
       const names = segments.map((_segment, index) => imageFileName('report.pdf', 10, segments, index));
       expect(new Set(names).size).toBe(names.length);
       expect([...names].sort()).toEqual(names);
+    }
+  });
+});
+
+describe('pdfFileName(<元の名前>-p<開始>-<終了>.pdf。ページ番号は総ページ数の桁数でゼロ埋め。列数は含めない。区切りなしでも範囲つき)', () => {
+  it.each([
+    [20, 1, 4, 'report-p01-04.pdf'],
+    [20, 8, 20, 'report-p08-20.pdf'],
+    [120, 5, 99, 'report-p005-099.pdf'],
+    [9, 5, 7, 'report-p5-7.pdf'],
+    [150, 1, 150, 'report-p001-150.pdf'],
+  ])('総ページ数 %i、p.%i–%i → %j', (pageCount, start, end, expected) => {
+    expect(pdfFileName('report.pdf', { start, end }, pageCount)).toBe(expected);
+  });
+
+  it('元のファイル名の扱いは PNG と同じ(拡張子の除去、空のときの代わりの名前)。必ず .pdf で終わる', () => {
+    expect(pdfFileName('議事録.PDF', { start: 2, end: 3 }, 20)).toBe('議事録-p02-03.pdf');
+    expect(pdfFileName('', { start: 2, end: 3 }, 20)).toBe(`${FALLBACK_BASE_NAME}-p02-03.pdf`);
+  });
+
+  it('PNG と同じセグメントの名前は、拡張子と列数を除いて同じ(同じ区切りで対になる)', () => {
+    const segments = segmentsOf(120, [5, 100]);
+    for (const segment of segments) {
+      const png = segmentFileName('r.pdf', segment, 120, 7).replace(/-7cols\.png$/, '');
+      expect(pdfFileName('r.pdf', segment, 120)).toBe(`${png}.pdf`);
     }
   });
 });
