@@ -4,13 +4,16 @@ import { configurePdfjs, documentOptions } from './config.ts';
 import { toOpenFailure } from './errors.ts';
 import { readPageSizes } from './page-sizes.ts';
 import { createPageSource, type RenderSurface } from './source.ts';
+import { slicePages } from './slice.ts';
 import { renderThumbnailPage } from './thumbnail-render.ts';
 
 /** 開いた文書から、描画元(ページの大きさと、読めたかどうかは、ここで全ページ分を読む)と、閉じる処理を作る。 */
-async function wrap(doc: PDFDocumentProxy, surface: RenderSurface): Promise<OpenedPdf> {
+async function wrap(doc: PDFDocumentProxy, surface: RenderSurface, file: File): Promise<OpenedPdf> {
   const source = createPageSource(doc, await readPageSizes(doc), surface);
   return {
     source,
+    /** PDF の出力(F12)は、元のバイト列を保持せず、呼ばれるたびにファイルを読み直して、ページを切り出す。 */
+    slice: async (segment) => slicePages(new Uint8Array(await file.arrayBuffer()), segment),
     /** 元PDFプレビュー(F11)のサムネイル描画は、最終の出力画像とは別に、直接 canvas へ描く。 */
     renderThumbnail: (index, targetWidth, canvas, signal) => renderThumbnailPage(doc, index + 1, targetWidth, canvas, signal),
     /** 作業用の canvas を手放し、pdf.js の文書と Worker を破棄する。 */
@@ -29,7 +32,7 @@ export async function openPdf(file: File, surface: RenderSurface): Promise<Opene
   configurePdfjs();
   const task = getDocument({ data: new Uint8Array(await file.arrayBuffer()), ...documentOptions() });
   try {
-    return await wrap(await task.promise, surface);
+    return await wrap(await task.promise, surface, file);
   } catch (error) {
     void task.destroy();
     throw toOpenFailure(error);

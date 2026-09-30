@@ -15,8 +15,12 @@ export interface ToolbarHandlers {
   zoomActual(): void;
   zoomFit(): void;
   download(): void;
-  /** 「すべてダウンロード」のボタン(一括保存中は「キャンセル」になる)が押された。 */
+  /** 「すべてPNGをダウンロード」のボタン(一括保存中は「キャンセル」になる)が押された。 */
   downloadAll(): void;
+  /** 「PDFをダウンロード」のボタンが押された。 */
+  downloadPdf(): void;
+  /** 「すべてPDFをダウンロード」のボタンが押された。 */
+  downloadAllPdf(): void;
 }
 
 /** セグメントの選択肢: 表示する文言と、選択肢の値になる、セグメントの先頭ページ。 */
@@ -62,6 +66,8 @@ interface Buttons {
   readonly zoomFit: HTMLButtonElement;
   readonly download: HTMLButtonElement;
   readonly downloadAll: HTMLButtonElement;
+  readonly downloadPdf: HTMLButtonElement;
+  readonly downloadAllPdf: HTMLButtonElement;
 }
 
 /** root の中から、入力欄と選択の要素を取り出す。 */
@@ -74,6 +80,16 @@ function findFields(root: ParentNode): Fields {
   };
 }
 
+/** root の中から、保存のボタン(PNG と PDF、それぞれ単体と全体)の要素を取り出す。 */
+function findSaveButtons(root: ParentNode): Pick<Buttons, 'download' | 'downloadAll' | 'downloadPdf' | 'downloadAllPdf'> {
+  return {
+    download: requireElement(root, '#download'),
+    downloadAll: requireElement(root, '#download-all'),
+    downloadPdf: requireElement(root, '#download-pdf'),
+    downloadAllPdf: requireElement(root, '#download-all-pdf'),
+  };
+}
+
 /** root の中から、ボタンの要素を取り出す。 */
 function findButtons(root: ParentNode): Buttons {
   return {
@@ -82,8 +98,7 @@ function findButtons(root: ParentNode): Buttons {
     zoomIn: requireElement(root, '#zoom-in'),
     zoomLevel: requireElement(root, '#zoom-level'),
     zoomFit: requireElement(root, '#zoom-fit'),
-    download: requireElement(root, '#download'),
-    downloadAll: requireElement(root, '#download-all'),
+    ...findSaveButtons(root),
   };
 }
 
@@ -137,13 +152,15 @@ class ToolbarView implements Toolbar {
 
   /** ズームとダウンロードのボタンを、handlers に結びつける。 */
   private bindButtons(handlers: ToolbarHandlers): void {
-    const { zoomOut, zoomIn, zoomLevel, zoomFit, download, downloadAll } = this.buttons;
+    const { zoomOut, zoomIn, zoomLevel, zoomFit, download, downloadAll, downloadPdf, downloadAllPdf } = this.buttons;
     zoomOut.addEventListener('click', () => handlers.zoomOut());
     zoomIn.addEventListener('click', () => handlers.zoomIn());
     zoomLevel.addEventListener('click', () => handlers.zoomActual());
     zoomFit.addEventListener('click', () => handlers.zoomFit());
     download.addEventListener('click', () => handlers.download());
     downloadAll.addEventListener('click', () => handlers.downloadAll());
+    downloadPdf.addEventListener('click', () => handlers.downloadPdf());
+    downloadAllPdf.addEventListener('click', () => handlers.downloadAllPdf());
   }
 
   /** 操作の可否、列数と区切りの欄、セグメントの選択肢、倍率の表示を、model のとおりにする(入力中の欄は、書き換えない)。 */
@@ -173,16 +190,18 @@ class ToolbarView implements Toolbar {
     segment.disabled = !model.flags.segments;
   }
 
-  /** ボタンの有効・無効と、倍率の表示、「すべてダウンロード」の文言(一括保存中は「キャンセル」)を、model のとおりにする。 */
+  /** ボタンの有効・無効と、倍率の表示、「すべてPNGをダウンロード」の文言(一括保存中は「キャンセル」)を、model のとおりにする。 */
   private renderButtons(model: ToolbarModel): void {
     const { flags } = model;
-    const { pick, zoomOut, zoomIn, zoomLevel, zoomFit, download, downloadAll } = this.buttons;
+    const { pick, zoomOut, zoomIn, zoomLevel, zoomFit, download, downloadAll, downloadPdf, downloadAllPdf } = this.buttons;
     pick.disabled = !flags.pick;
     for (const button of [zoomOut, zoomIn, zoomLevel, zoomFit]) button.disabled = !flags.zoom;
     zoomLevel.textContent = model.zoomLabel;
     download.disabled = !flags.download;
-    downloadAll.textContent = flags.cancelBatch ? 'キャンセル' : 'すべてダウンロード';
+    downloadAll.textContent = flags.cancelBatch ? 'キャンセル' : 'すべてPNGをダウンロード';
     downloadAll.disabled = !(flags.downloadAll || flags.cancelBatch);
+    downloadPdf.disabled = !flags.downloadPdf;
+    downloadAllPdf.disabled = !flags.downloadAllPdf;
   }
 
   /** 列数の欄に、値を書き戻す。 */

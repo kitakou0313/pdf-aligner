@@ -395,16 +395,16 @@ describe('古いイベントの無視(中断した描画の残りのイベント
 });
 
 describe('uiFlags(blueprint の「画面の状態と操作の可否」。* は、セグメントが 2 個以上のときだけ有効)', () => {
-  const NONE = { pick: false, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false };
+  const NONE = { pick: false, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false, downloadPdf: false, downloadAllPdf: false };
   const RENDERING_SPLIT = run([{ type: 'separatorsChanged', separators: [5, 8] }], READY_20);
 
   it.each([
     ['idle', INITIAL_STATE, { ...NONE, pick: true }],
     ['loading', LOADING, { ...NONE, pick: true }],
-    ['rendering(区切りなし)', RENDERING, { ...NONE, pick: true, columns: true, separators: true, zoom: true }],
-    ['rendering(区切りあり)', RENDERING_SPLIT, { ...NONE, pick: true, columns: true, separators: true, segments: true, zoom: true }],
-    ['ready(区切りなし)', READY, { ...NONE, pick: true, columns: true, separators: true, zoom: true, download: true }],
-    ['ready(区切りあり)', SPLIT, { ...NONE, pick: true, columns: true, separators: true, segments: true, zoom: true, download: true, downloadAll: true }],
+    ['rendering(区切りなし)', RENDERING, { ...NONE, pick: true, columns: true, separators: true, zoom: true, downloadPdf: true }],
+    ['rendering(区切りあり)', RENDERING_SPLIT, { ...NONE, pick: true, columns: true, separators: true, segments: true, zoom: true, downloadPdf: true, downloadAllPdf: true }],
+    ['ready(区切りなし)', READY, { ...NONE, pick: true, columns: true, separators: true, zoom: true, download: true, downloadPdf: true }],
+    ['ready(区切りあり)', SPLIT, { ...NONE, pick: true, columns: true, separators: true, segments: true, zoom: true, download: true, downloadAll: true, downloadPdf: true, downloadAllPdf: true }],
     ['一括保存中(描画の途中でも、完了でも同じ)', BATCHING, { ...NONE, cancelBatch: true }],
     ['一括保存中(描画の途中)', run([{ type: 'segmentSelected', start: 5 }], BATCHING), { ...NONE, cancelBatch: true }],
   ])('%s', (_name, state, expected) => {

@@ -1,4 +1,5 @@
 import { composePages, type ComposeOptions, type PageSource } from './compose.ts';
+import { pdfFileName } from './filename.ts';
 import type { Layout, LayoutPlan } from './layout.ts';
 import type { CanvasLimits } from './limits.ts';
 import { effectiveColumns, segmentPageCount, type Segment } from './segments.ts';
@@ -16,6 +17,8 @@ export interface OpenedPdf {
   readonly source: PageSource;
   /** 元PDFプレビュー(F11)用: n ページ目(0 始まり)を、指定した幅のサムネイルとして canvas に描く。 */
   renderThumbnail(index: number, targetWidth: number, canvas: HTMLCanvasElement, signal: AbortSignal): Promise<void>;
+  /** PDF の出力用: segment のページだけを切り出した、新しい PDF のバイト列を作る(元のバイト列は保持せず、呼ばれるたびに読み直す)。 */
+  slice(segment: Segment): Promise<Uint8Array>;
   close(): void;
 }
 
@@ -67,9 +70,11 @@ interface BatchDeps extends RenderDeps {
   readonly saveImage: (fileName: string) => Promise<boolean>;
 }
 
-/** コントローラが頼る外部(描画に関わるもの、PDF を開く処理、画像の保存)。F は、開く対象(実物は File)の型。 */
+/** コントローラが頼る外部(描画に関わるもの、PDF を開く処理、画像と PDF の保存)。F は、開く対象(実物は File)の型。 */
 export interface ControllerDeps<F extends PdfFile = PdfFile> extends BatchDeps {
   readonly open: (file: F) => Promise<OpenedPdf>;
+  /** 切り出した PDF を、指定した名前で保存する。 */
+  readonly savePdf: (data: Uint8Array, fileName: string) => void;
 }
 
 /** 利用者の操作を受け付けて、PDF の読み込みと描画を調停する。各操作は、完了または後の操作に置き換えられたときに解決し、拒否はしない。 */
@@ -84,6 +89,10 @@ export interface Controller<F extends PdfFile = PdfFile> {
   downloadAll(): Promise<void>;
   /** 一括保存をキャンセルする(一括保存中でなければ何もしない)。 */
   cancelBatch(): void;
+  /** 表示中のセグメントのページを、元ページのまま切り出した PDF として保存する(始められないときは何もしない)。 */
+  downloadPdf(): Promise<void>;
+  /** 全セグメントを、先頭から順に、セグメントごとの PDF として保存する(区切りなしのときは何もしない)。 */
+  downloadAllPdf(): Promise<void>;
   /** 複数ファイルのドロップを拒否する(表示中の状態はそのまま、エラーだけを出す)。 */
   rejectDrop(): void;
 }
@@ -371,7 +380,103 @@ async function selectSegment(deps: RenderDeps, session: Session, start: number):
   await applyChange(deps, session, { type: 'segmentSelected', start });
 }
 
-/** 状態の入れ物、PDF を開く処理、出力先の準備、画像の保存を受け取って、コントローラを作る。 */
+/** PDF の書き出しの結果: 保存できた個数と、失敗で止まったか(failed)。 */
+interface PdfSaveResult {
+  readonly saved: number;
+  readonly failed: boolean;
+}
+
+/** 1 つのセグメントを切り出して保存する。PDF が差し替わっていた(epoch が進んでいた)ときは、保存せずに false。 */
+async function saveOnePdf<F extends PdfFile>(deps: ControllerDeps<F>, session: Session, job: PdfJob, segment: Segment): Promise<boolean> {
+  const data = await job.pdf.slice(segment);
+  if (job.epoch !== session.epoch) return false;
+  deps.savePdf(data, pdfFileName(job.fileName, segment, job.pageCount));
+  return true;
+}
+
+/** 書き出す PDF と、書き出しを始めたときの世代・ファイル名・総ページ数。 */
+interface PdfJob {
+  readonly pdf: OpenedPdf;
+  readonly epoch: number;
+  readonly fileName: string;
+  readonly pageCount: number;
+}
+
+/** 1 つのセグメントの保存の結果: 保存した(saved)、PDF が差し替わっていた(stale)、切り出しに失敗した(failed)。 */
+type PdfStep = 'saved' | 'stale' | 'failed';
+
+/** 1 つのセグメントを保存し、例外(切り出しの失敗)は failed にする。ただし、差し替わったあとの失敗は、stale として無視する。 */
+async function tryOnePdf<F extends PdfFile>(deps: ControllerDeps<F>, session: Session, job: PdfJob, segment: Segment): Promise<PdfStep> {
+  try {
+    return (await saveOnePdf(deps, session, job, segment)) ? 'saved' : 'stale';
+  } catch (error) {
+    console.error('PDF の書き出しに失敗しました', error);
+    return job.epoch === session.epoch ? 'failed' : 'stale';
+  }
+}
+
+/** segments を先頭から順に保存する。切り出しに失敗したら止める(保存できた個数と failed を返す)。PDF が差し替わったら、null(何も知らせない)。 */
+async function savePdfSegments<F extends PdfFile>(deps: ControllerDeps<F>, session: Session, job: PdfJob, segments: readonly Segment[]): Promise<PdfSaveResult | null> {
+  let saved = 0;
+  for (const segment of segments) {
+    const step = await tryOnePdf(deps, session, job, segment);
+    if (step === 'stale') return null;
+    if (step === 'failed') return { saved, failed: true };
+    saved += 1;
+  }
+  return { saved, failed: false };
+}
+
+/** 書き出しの結果を、状態に知らせる(PDF が差し替わって結果が null のときは、何もしない)。 */
+function reportPdfSave(deps: RenderDeps, result: PdfSaveResult | null, total: number): void {
+  if (!result) return;
+  deps.store.dispatch(result.failed ? { type: 'pdfSaveFailed', saved: result.saved, total } : { type: 'pdfSaveFinished' });
+}
+
+/** PDF の書き出しを始めて、pick が選んだセグメントを保存する。始められないとき(状態機械が受け付けないとき、PDF がないとき、対象がないとき)は、何もしない。 */
+async function downloadPdfs<F extends PdfFile>(deps: ControllerDeps<F>, session: Session, pick: (state: AppState) => Segment[]): Promise<void> {
+  const before = deps.store.getState();
+  deps.store.dispatch({ type: 'pdfSaveStarted' });
+  const state = deps.store.getState();
+  if (state === before) return;
+  const segments = pick(state);
+  if (!session.pdf || segments.length === 0) return void deps.store.dispatch({ type: 'pdfSaveFinished' });
+  const job = { pdf: session.pdf, epoch: session.epoch, fileName: state.fileName ?? '', pageCount: state.pageCount };
+  reportPdfSave(deps, await savePdfSegments(deps, session, job, segments), segments.length);
+}
+
+/** 表示中のセグメントだけ(表示中のセグメントがなければ空)。 */
+function shownOnly(state: AppState): Segment[] {
+  const segment = shownSegment(state);
+  return segment ? [segment] : [];
+}
+
+/** 全セグメント(区切りなしのときは空。「すべて」は、区切りがあるときだけ意味がある)。 */
+function allSegments(state: AppState): Segment[] {
+  return state.separators.length > 0 ? segmentsOfState(state) : [];
+}
+
+/** PNG の一括保存の 2 つの操作(開始とキャンセル)。 */
+function batchActions<F extends PdfFile>(deps: ControllerDeps<F>, session: Session): Pick<Controller<F>, 'downloadAll' | 'cancelBatch'> {
+  return {
+    /** 全セグメントを、セグメントごとの PNG として保存する。 */
+    downloadAll: () => downloadAll(deps, session),
+    /** 一括保存をキャンセルする。 */
+    cancelBatch: () => cancelBatch(deps, session),
+  };
+}
+
+/** PDF の書き出しの 2 つの操作(表示中のセグメントだけ、全セグメント)。 */
+function pdfActions<F extends PdfFile>(deps: ControllerDeps<F>, session: Session): Pick<Controller<F>, 'downloadPdf' | 'downloadAllPdf'> {
+  return {
+    /** 表示中のセグメントを、PDF として保存する。 */
+    downloadPdf: () => downloadPdfs(deps, session, shownOnly),
+    /** 全セグメントを、セグメントごとの PDF として保存する。 */
+    downloadAllPdf: () => downloadPdfs(deps, session, allSegments),
+  };
+}
+
+/** 状態の入れ物、PDF を開く処理、出力先の準備、画像と PDF の保存を受け取って、コントローラを作る。 */
 export function createController<F extends PdfFile = PdfFile>(deps: ControllerDeps<F>): Controller<F> {
   const session: Session = { pdf: null, abort: null, inflight: Promise.resolve(), epoch: 0, batchAbort: null };
   return {
@@ -383,10 +488,9 @@ export function createController<F extends PdfFile = PdfFile>(deps: ControllerDe
     setSeparators: (separators) => applyChange(deps, session, { type: 'separatorsChanged', separators }),
     /** 表示するセグメントを選んで、描き直す。 */
     selectSegment: (start) => selectSegment(deps, session, start),
-    /** 全セグメントを、セグメントごとの PNG として保存する。 */
-    downloadAll: () => downloadAll(deps, session),
-    /** 一括保存をキャンセルする。 */
-    cancelBatch: () => cancelBatch(deps, session),
+    /** PNG の一括保存(開始とキャンセル)と、PDF の書き出し(表示中のセグメントだけ、全セグメント)。 */
+    ...batchActions(deps, session),
+    ...pdfActions(deps, session),
     /** 複数ファイルのドロップを拒否する。 */
     rejectDrop: () => deps.store.dispatch({ type: 'dropRejected' }),
   };

@@ -13,7 +13,7 @@ import { wheelZoomFactor, zoomAnchoredScroll, type Point } from './core/zoom.ts'
 import { openPdf } from './pdf/loader.ts';
 import { requireElement } from './view/dom.ts';
 import { bindDropzone, blockStrayDrops } from './view/dropzone.ts';
-import { canvasToPng, saveBlob } from './view/download.ts';
+import { canvasToPng, savePdfBytes, saveBlob } from './view/download.ts';
 import { createPreview, type Preview } from './view/preview.ts';
 import { renderStatus } from './view/status.ts';
 import { createThumbnailSidebar, type ThumbnailSidebar } from './view/thumbnail-sidebar.ts';
@@ -54,7 +54,7 @@ class App implements ToolbarHandlers {
   private buildController(): Controller<File> {
     const open = this.openFile.bind(this);
     const [prepare, saveImage] = [this.onPrepare.bind(this), this.saveImage.bind(this)];
-    return createController<File>({ store: this.store, open, prepare, saveImage, thumbnails: this.thumbnails });
+    return createController<File>({ store: this.store, open, prepare, saveImage, savePdf: savePdfBytes, thumbnails: this.thumbnails });
   }
 
   /** 区切りの入力欄の規則を、状態・区切りの反映・欄への書き戻しにつないで作る。 */
@@ -252,7 +252,17 @@ class App implements ToolbarHandlers {
     if (!(await this.saveImage(shownImageName(state)))) this.store.dispatch({ type: 'pngFailed' });
   }
 
-  /** 「すべてダウンロード」のボタン: 一括保存を始める。一括保存中は、キャンセルになる。 */
+  /** 「PDFをダウンロード」のボタン: 表示中のセグメントを、元ページのまま切り出した PDF として保存する。 */
+  downloadPdf(): void {
+    void this.controller.downloadPdf();
+  }
+
+  /** 「すべてPDFをダウンロード」のボタン: 全セグメントを、セグメントごとの PDF として保存する。 */
+  downloadAllPdf(): void {
+    void this.controller.downloadAllPdf();
+  }
+
+  /** 「すべてPNGをダウンロード」のボタン: 一括保存を始める。一括保存中は、キャンセルになる。 */
   downloadAll(): void {
     if (this.store.getState().batch) this.controller.cancelBatch();
     else void this.controller.downloadAll();

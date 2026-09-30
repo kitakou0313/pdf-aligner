@@ -24,8 +24,14 @@
           <button type="button" id="zoom-in" aria-label="拡大">＋</button>
           <button type="button" id="zoom-fit">画面に合わせる</button>
         </div>
-        <button type="button" id="download">PNGをダウンロード</button>
-        <button type="button" id="download-all" title="Chrome が複数ファイルのダウンロードの確認を出したら、「許可」を選んでください" disabled>すべてダウンロード</button>
+        <div class="save-group" role="group" aria-label="PNG で保存">
+          <button type="button" id="download">PNGをダウンロード</button>
+          <button type="button" id="download-all" title="Chrome が複数ファイルのダウンロードの確認を出したら、「許可」を選んでください" disabled>すべてPNGをダウンロード</button>
+        </div>
+        <div class="save-group" role="group" aria-label="PDF で保存">
+          <button type="button" id="download-pdf" title="元のページをそのまま切り出した PDF を保存します" disabled>PDFをダウンロード</button>
+          <button type="button" id="download-all-pdf" title="Chrome が複数ファイルのダウンロードの確認を出したら、「許可」を選んでください" disabled>すべてPDFをダウンロード</button>
+        </div>
       </header>
       <div id="status" class="status" role="status" aria-live="polite"></div>
       <div class="workspace">

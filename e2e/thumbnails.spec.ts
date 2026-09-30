@@ -126,7 +126,7 @@ test.describe('元PDFプレビュー(F11: 区切りページ判断の補助の�
     await expect(ui(page).thumbnails).toBeVisible();
     await expect(thumbs(page)).toHaveCount(12);
     await releaseToBlob(page);
-    await expect(ui(page).downloadAll).toHaveText('すべてダウンロード');
+    await expect(ui(page).downloadAll).toHaveText('すべてPNGをダウンロード');
   });
 
   test('一括保存中は、元PDFプレビューをスクロールしても、出力の描画は中断されない(F7: 一括保存中を除く)', async ({ page }) => {
@@ -140,7 +140,7 @@ test.describe('元PDFプレビュー(F11: 区切りページ判断の補助の�
     await ui(page).thumbnails.evaluate((el) => {
       el.scrollTop = el.scrollHeight;
     });
-    await expect(ui(page).downloadAll).toHaveText('すべてダウンロード', { timeout: 240_000 });
+    await expect(ui(page).downloadAll).toHaveText('すべてPNGをダウンロード', { timeout: 240_000 });
     await throttleCpu(page, 1);
     const log = (await statusLog.jsonValue()) as string[];
     expect(log, '一括保存中は、元PDFプレビュー優先の文言を一度も出さない').not.toContain('元PDFプレビューの表示を優先しています');

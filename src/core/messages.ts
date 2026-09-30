@@ -35,6 +35,11 @@ export function formatBatchFailed(range: string, saved: number, total: number): 
   return `${range} の画像が大きすぎて PNG を生成できませんでした。${total} 個中 ${saved} 個を保存しました。`;
 }
 
+/** PDF を書き出せなかったときの警告の文言を作る。saved は、保存できた個数。 */
+export function formatPdfFailed(saved: number, total: number): string {
+  return `PDF を書き出せませんでした。${total} 個中 ${saved} 個を保存しました。`;
+}
+
 /** 数を 3 桁区切りの文字列にする(表示が環境に依存しないよう、ロケールを固定する)。 */
 function withCommas(value: number): string {
   return value.toLocaleString('en-US');

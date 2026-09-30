@@ -41,7 +41,7 @@ const SEGMENTS: readonly Expected[] = [
   { start: 9, label: 'p.9–12(3/3)', first: 8, count: 4, columns: 4, fileName: 'colored-12-p09-12-4cols.png' },
 ];
 const CONTROLS = ['pick', 'columns', 'separators', 'segment', 'zoomIn', 'zoomOut', 'zoomLevel', 'zoomFit', 'download'] as const;
-const IDLE_TEXT = 'すべてダウンロード';
+const IDLE_TEXT = 'すべてPNGをダウンロード';
 
 /** セグメントの期待するレイアウト(blueprint の式)。 */
 function gridOfSegment(segment: Expected): Grid {
@@ -57,7 +57,7 @@ async function openSplit(page: Page): Promise<void> {
   await expectImage(page, gridOfSegment(SEGMENTS[0]!));
 }
 
-/** 「すべてダウンロード」を押して、一括保存が終わる(ボタンが元の文言に戻る)まで待つ。 */
+/** 「すべてPNGをダウンロード」を押して、一括保存が終わる(ボタンが元の文言に戻る)まで待つ。 */
 async function downloadAllAndWait(page: Page): Promise<void> {
   await ui(page).downloadAll.click();
   await expect(ui(page).downloadAll).toHaveText(IDLE_TEXT, { timeout: RENDER_TIMEOUT_MS });
@@ -70,7 +70,7 @@ async function expectedFitPercent(page: Page, grid: Grid): Promise<number> {
 }
 
 test.describe('区切りの入力(blueprint の F9、例 7。12 ページ)', () => {
-  test('PDF を読み込むまでは無効。読み込むと欄は有効で、区切りなしのときは、セグメントの選択と「すべてダウンロード」は無効', async ({ page, shot }) => {
+  test('PDF を読み込むまでは無効。読み込むと欄は有効で、区切りなしのときは、セグメントの選択と「すべてPNGをダウンロード」は無効', async ({ page, shot }) => {
     await page.goto('/');
     for (const name of ['separators', 'segment', 'downloadAll'] as const) await expect(ui(page)[name], name).toBeDisabled();
     await openAndWait(page, 'colored-12.pdf');
@@ -83,7 +83,7 @@ test.describe('区切りの入力(blueprint の F9、例 7。12 ページ)', () 
     await shot('区切りなし');
   });
 
-  test('区切りを入力すると、セグメントの選択肢ができて、選択と「すべてダウンロード」が有効になる', async ({ page, shot }) => {
+  test('区切りを入力すると、セグメントの選択肢ができて、選択と「すべてPNGをダウンロード」が有効になる', async ({ page, shot }) => {
     await openSplit(page);
     await expect(ui(page).separators).toHaveValue('4, 9');
     expect(await segmentLabels(page)).toEqual(SEGMENTS.map((segment) => segment.label));
@@ -262,7 +262,7 @@ test('失敗したページは、元の PDF のページ番号で警告する。
   await expect(ui(page).status, 'p.3–3 には、失敗したページがない').toHaveText('');
 });
 
-test.describe('すべてダウンロード(一括保存。blueprint の F10、例 9。colored-12、区切り 4, 9、列数 4)', () => {
+test.describe('すべてPNGをダウンロード(一括保存。blueprint の F10、例 9。colored-12、区切り 4, 9、列数 4)', () => {
   test('全セグメントを、先頭から順に、セグメントごとの PNG として保存する。全ての PNG のページを合わせると、元の全ページがちょうど 1 度ずつ現れる', async ({ page, shot, keepPng }) => {
     await openSplit(page);
     const downloads = collectDownloads(page);

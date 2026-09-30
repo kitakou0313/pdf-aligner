@@ -50,6 +50,11 @@ class FakePdf implements OpenedPdf {
   renderThumbnail(): Promise<void> {
     return Promise.resolve();
   }
+
+  /** この偽物では使わない(PDF の書き出しは pdf-save.test.ts で確かめる)。 */
+  slice(): Promise<Uint8Array> {
+    return Promise.resolve(new Uint8Array());
+  }
 }
 
 /** prepare の追加動作: 「prepare <ページ数>」をログに残す。 */
@@ -167,8 +172,11 @@ function setup(open: (file: PdfFile) => Promise<OpenedPdf>, extra: SetupExtra = 
     extra.prepare?.(layout);
   };
   const saveImage = recordingSaver(store, requests, extra.saveImage);
-  return { store, controller: createController({ store, open, prepare, saveImage, thumbnails: extra.thumbnails }), prepared, phases, requests };
+  return { store, controller: createController({ store, open, prepare, saveImage, savePdf: ignorePdf, thumbnails: extra.thumbnails }), prepared, phases, requests };
 }
+
+/** PDF の保存を求められても、何もしない(この試験の対象外。pdf-save.test.ts で確かめる)。 */
+function ignorePdf(): void {}
 
 /** 常に同じ PDF を返す open。 */
 function alwaysOpens(pdf: OpenedPdf): (file: PdfFile) => Promise<OpenedPdf> {
@@ -233,7 +241,7 @@ describe('PDF の選択 → 読み込み → 描画 → 完了', () => {
     const prepared: Layout[] = [];
     const limits = { maxSide: 4000, maxArea: 4_000_000 };
     const prepare = prepared.push.bind(prepared);
-    const controller = createController({ store, open: alwaysOpens(new FakePdf(12)), prepare, saveImage: alwaysSaves, limits });
+    const controller = createController({ store, open: alwaysOpens(new FakePdf(12)), prepare, saveImage: alwaysSaves, savePdf: ignorePdf, limits });
     await controller.chooseFile(file('big.pdf'));
     expect(prepared[0]?.scale).toBeLessThan(2);
     expect(store.getState().shrink).toMatchObject({ scale: prepared[0]?.scale, width: prepared[0]?.width });

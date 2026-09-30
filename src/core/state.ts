@@ -8,6 +8,7 @@ import {
   formatBatchFailed,
   formatBatchProgress,
   formatFailedPages,
+  formatPdfFailed,
   formatProgress,
   formatShrinkNotice,
   type AppError,
@@ -46,6 +47,12 @@ export interface BatchStop {
   readonly segment: Segment | null;
 }
 
+/** PDF の書き出しを失敗で止めた記録(警告に出す): 保存できた個数と、保存しようとした総数。 */
+export interface PdfStop {
+  readonly saved: number;
+  readonly total: number;
+}
+
 /** アプリ全体の状態。View は個別のフラグを持たず、ここから導く。 */
 export interface AppState {
   readonly phase: Phase;
@@ -64,6 +71,10 @@ export interface AppState {
   readonly batch: BatchProgress | null;
   /** 直前の一括保存を、キャンセルまたは失敗で止めた記録。 */
   readonly batchStop: BatchStop | null;
+  /** PDF を書き出している最中か(画像の描画とは独立。その間は PDF のボタンだけが無効になる)。 */
+  readonly pdfSaving: boolean;
+  /** 直前の PDF の書き出しを、失敗で止めた記録。 */
+  readonly pdfStop: PdfStop | null;
   /** 元PDFプレビューの都合で、出力の描画を始めていない、または中断しているか(F7/F11。一括保存中はならない)。 */
   readonly deferredForThumbnails: boolean;
 }
@@ -87,7 +98,10 @@ export type AppEvent =
   | { readonly type: 'batchFinished' }
   | { readonly type: 'batchStopped'; readonly reason: 'cancelled' | 'failed'; readonly index: number; readonly saved: number }
   | { readonly type: 'renderDeferred' }
-  | { readonly type: 'renderResumed' };
+  | { readonly type: 'renderResumed' }
+  | { readonly type: 'pdfSaveStarted' }
+  | { readonly type: 'pdfSaveFinished' }
+  | { readonly type: 'pdfSaveFailed'; readonly saved: number; readonly total: number };
 
 /** 各操作の可否(blueprint の「画面の状態と操作の可否」)。 */
 export interface UiFlags {
@@ -98,8 +112,10 @@ export interface UiFlags {
   readonly zoom: boolean;
   readonly download: boolean;
   readonly downloadAll: boolean;
-  /** 一括保存中の「キャンセル」(「すべてダウンロード」のボタンが、この役目になる)。 */
+  /** 一括保存中の「キャンセル」(「すべてPNGをダウンロード」のボタンが、この役目になる)。 */
   readonly cancelBatch: boolean;
+  readonly downloadPdf: boolean;
+  readonly downloadAllPdf: boolean;
 }
 
 /** ステータス行の 1 行(種類と文言)。 */
@@ -121,6 +137,8 @@ export const INITIAL_STATE: AppState = {
   error: null,
   batch: null,
   batchStop: null,
+  pdfSaving: false,
+  pdfStop: null,
   deferredForThumbnails: false,
 };
 
@@ -161,7 +179,7 @@ function isActive(state: AppState): boolean {
 /** 表示する画像を描き直す状態にする(描画中に戻し、進捗を 0 から数え直し、縮小・警告・エラーを消す)。 */
 function restart(state: AppState): AppState {
   const progress = { done: 0, total: shownPageCount(state) };
-  return { ...state, phase: 'rendering', progress, shrink: null, failedPages: [], error: null, batchStop: null, deferredForThumbnails: false };
+  return { ...state, phase: 'rendering', progress, shrink: null, failedPages: [], error: null, batchStop: null, pdfStop: null, deferredForThumbnails: false };
 }
 
 /** PDF を選ぶと、どの状態からでも、全ての状態を置き換えて loading になる。 */
@@ -281,6 +299,22 @@ function onRenderResumed(state: AppState): AppState {
   return state.deferredForThumbnails ? { ...state, deferredForThumbnails: false } : state;
 }
 
+/** PDF の書き出しは、描画中か完了のときだけ(一括保存中と、書き出し中を除く)始められる。前のエラーと、前の書き出しの警告は消す。 */
+function onPdfSaveStarted(state: AppState): AppState {
+  if (!isActive(state) || state.batch || state.pdfSaving) return state;
+  return { ...state, pdfSaving: true, error: null, pdfStop: null };
+}
+
+/** PDF の書き出しを、全部保存し終えて終える(書き出し中でなければ無視する)。警告は残さない。 */
+function onPdfSaveFinished(state: AppState): AppState {
+  return state.pdfSaving ? { ...state, pdfSaving: false } : state;
+}
+
+/** PDF の書き出しを、失敗で終える(書き出し中でなければ無視する)。保存できた個数と総数を、警告のために残す。 */
+function onPdfSaveFailed(state: AppState, event: EventOf<'pdfSaveFailed'>): AppState {
+  return state.pdfSaving ? { ...state, pdfSaving: false, pdfStop: { saved: event.saved, total: event.total } } : state;
+}
+
 const HANDLERS: Handlers = {
   fileChosen: onFileChosen,
   loadFailed: onLoadFailed,
@@ -300,6 +334,9 @@ const HANDLERS: Handlers = {
   batchStopped: onBatchStopped,
   renderDeferred: onRenderDeferred,
   renderResumed: onRenderResumed,
+  pdfSaveStarted: onPdfSaveStarted,
+  pdfSaveFinished: onPdfSaveFinished,
+  pdfSaveFailed: onPdfSaveFailed,
 };
 
 /** 状態にイベントを適用した、新しい状態を返す(状態は書き換えない。状況に合わない古いイベントは無視する)。 */
@@ -309,11 +346,13 @@ export function reduce(state: AppState, event: AppEvent): AppState {
 }
 
 // 各状態で許される操作。segments と downloadAll は、状態が許すかどうかだけで、セグメントが 2 個以上かは uiFlags が加味する
+// PDF のボタン(downloadPdf / downloadAllPdf)は、画像の描画を待たず、PDF を読めていれば(描画中でも)使える
+const NO_PDF = { downloadPdf: false, downloadAllPdf: false };
 const FLAGS: Readonly<Record<Phase, UiFlags>> = {
-  idle: { pick: true, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false },
-  loading: { pick: true, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false },
-  rendering: { pick: true, columns: true, separators: true, segments: true, zoom: true, download: false, downloadAll: false, cancelBatch: false },
-  ready: { pick: true, columns: true, separators: true, segments: true, zoom: true, download: true, downloadAll: true, cancelBatch: false },
+  idle: { pick: true, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false, ...NO_PDF },
+  loading: { pick: true, columns: false, separators: false, segments: false, zoom: false, download: false, downloadAll: false, cancelBatch: false, ...NO_PDF },
+  rendering: { pick: true, columns: true, separators: true, segments: true, zoom: true, download: false, downloadAll: false, cancelBatch: false, downloadPdf: true, downloadAllPdf: true },
+  ready: { pick: true, columns: true, separators: true, segments: true, zoom: true, download: true, downloadAll: true, cancelBatch: false, downloadPdf: true, downloadAllPdf: true },
 };
 
 // 一括保存中は、「キャンセル」以外の操作を全て無効にする
@@ -326,6 +365,7 @@ const BATCH_FLAGS: UiFlags = {
   download: false,
   downloadAll: false,
   cancelBatch: true,
+  ...NO_PDF,
 };
 
 /** 状態から、各操作の可否を導く(セグメントの選択と「すべてダウンロード」は、セグメントが 2 個以上のときだけ有効)。 */
@@ -333,7 +373,8 @@ export function uiFlags(state: AppState): UiFlags {
   if (state.batch) return BATCH_FLAGS;
   const base = FLAGS[state.phase];
   const split = state.separators.length > 0;
-  return { ...base, segments: base.segments && split, downloadAll: base.downloadAll && split };
+  const pdf = base.downloadPdf && !state.pdfSaving;
+  return { ...base, segments: base.segments && split, downloadAll: base.downloadAll && split, downloadPdf: pdf, downloadAllPdf: pdf && split };
 }
 
 /** 一括保存中の進捗の文言(保存中 K/N 個(処理中のセグメントの範囲))を作る。 */
@@ -367,6 +408,7 @@ function noticeLines(state: AppState): StatusLine[] {
   }
   if (state.failedPages.length > 0) lines.push({ kind: 'warning', text: formatFailedPages(state.failedPages) });
   if (state.batchStop) lines.push(batchStopLine(state.batchStop));
+  if (state.pdfStop) lines.push({ kind: 'warning', text: formatPdfFailed(state.pdfStop.saved, state.pdfStop.total) });
   return lines;
 }
 
